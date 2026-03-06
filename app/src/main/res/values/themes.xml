@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base theme — no action bar, edge-to-edge -->
+    <style name="Theme.DompetKu" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- Splash screen theme (androidx.core:core-splashscreen) -->
+    <style name="Theme.DompetKu.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#2DAB7F</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.DompetKu</item>
+    </style>
+
+</resources>
