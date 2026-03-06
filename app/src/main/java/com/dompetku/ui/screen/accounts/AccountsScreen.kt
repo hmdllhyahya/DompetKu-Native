@@ -48,6 +48,7 @@ fun AccountsScreen(
 ) {
     val accounts     by viewModel.accounts.collectAsStateWithLifecycle()
     val totalBalance by viewModel.totalBalance.collectAsStateWithLifecycle()
+    val hidden       by viewModel.hideBalance.collectAsStateWithLifecycle()
 
     var editMode     by remember { mutableStateOf(false) }
     var showAddSheet by remember { mutableStateOf(false) }
@@ -62,7 +63,27 @@ fun AccountsScreen(
             .verticalScroll(rememberScrollState())
             .padding(bottom = 100.dp),
     ) {
-        AppHeader(title = "Akun", showDate = false)
+        AppHeader(
+            title    = "Akun",
+            showDate = false,
+            trailingContent = {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (hidden) GreenLight else Color(0xFFF1F5F9))
+                        .clickable { viewModel.toggleHideBalance() },
+                ) {
+                    Icon(
+                        imageVector = if (hidden) PhosphorIcons.Regular.EyeSlash else PhosphorIcons.Regular.Eye,
+                        contentDescription = null,
+                        tint     = if (hidden) GreenPrimary else TextLight,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            },
+        )
 
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
 
@@ -83,7 +104,7 @@ fun AccountsScreen(
                     Column {
                         Text("Total Semua Akun", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text(CurrencyFormatter.format(totalBalance), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(if (hidden) "Rp ••••••" else CurrencyFormatter.format(totalBalance), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
                     }
                     Box(
                         contentAlignment = Alignment.Center,
@@ -135,6 +156,7 @@ fun AccountsScreen(
                             account      = acc,
                             accIndex     = accounts.indexOf(acc),
                             editMode     = editMode,
+                            hidden       = hidden,
                             modifier     = Modifier.weight(1f),
                             onTap        = { if (!editMode) onNavigateToDetail(acc.id) },
                             onLongPress  = { editMode = true },
@@ -191,6 +213,7 @@ private fun AccountCard(
     account:     Account,
     accIndex:    Int,
     editMode:    Boolean,
+    hidden:      Boolean = false,
     modifier:    Modifier = Modifier,
     onTap:       () -> Unit,
     onLongPress: () -> Unit = {},
@@ -246,6 +269,7 @@ private fun AccountCard(
                     Icon(
                         imageVector = when (account.type) {
                             AccountType.ewallet -> PhosphorIcons.Regular.DeviceMobile
+                            AccountType.emoney  -> PhosphorIcons.Regular.WifiHigh
                             AccountType.cash    -> PhosphorIcons.Regular.Wallet
                             AccountType.savings -> PhosphorIcons.Regular.PiggyBank
                             else                -> PhosphorIcons.Regular.CreditCard
@@ -255,7 +279,7 @@ private fun AccountCard(
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    CurrencyFormatter.compact(account.balance),
+                    if (hidden) "••••" else CurrencyFormatter.compact(account.balance),
                     fontSize = 16.sp, fontWeight = FontWeight.Black,
                     color = if (account.balance < 0) Color(0xFFFCA5A5) else Color.White,
                 )

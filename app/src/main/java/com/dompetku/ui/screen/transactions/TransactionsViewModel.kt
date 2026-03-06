@@ -50,6 +50,8 @@ class TransactionsViewModel @Inject constructor(
         TxnUiState(allTxns = txns, accounts = accounts, hidden = prefs.hideBalance, filters = filters)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TxnUiState())
 
+    fun toggleHideBalance() { viewModelScope.launch { userPrefs.toggleHideBalance() } }
+
     fun setTypeFilter(f: TypeFilter)  { _filters.update { it.copy(type = f) } }
     fun setDateFilter(f: DateFilter)  { _filters.update { it.copy(date = f) } }
     fun setCustomFrom(v: String)      { _filters.update { it.copy(customFrom = v) } }
@@ -116,10 +118,12 @@ class TransactionsViewModel @Inject constructor(
 
     fun saveTransfer(txn: Transaction) {
         viewModelScope.launch {
+            val from = txn.fromId?.takeIf { it.isNotBlank() } ?: return@launch
+            val to   = txn.toId?.takeIf   { it.isNotBlank() } ?: return@launch
             transactionRepo.recordTransfer(txn)
             accountRepo.applyTransfer(
-                fromId   = txn.fromId ?: return@launch,
-                toId     = txn.toId   ?: return@launch,
+                fromId   = from,
+                toId     = to,
                 amount   = txn.amount,
                 adminFee = txn.adminFee,
             )

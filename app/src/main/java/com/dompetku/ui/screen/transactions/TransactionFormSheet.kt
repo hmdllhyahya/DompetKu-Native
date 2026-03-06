@@ -364,12 +364,10 @@ private fun TransferFields(form: TxnForm, accounts: List<Account>, onFormChange:
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            if (acc != null) Color(acc.gradientStart) else Color(0xFFE5E7EB),
-                                            if (acc != null) Color(acc.gradientEnd)   else Color(0xFFD1D5DB),
-                                        )
-                                    )
+                                    Brush.linearGradient(listOf(
+                                        if (acc != null) Color(acc.gradientStart.toInt()) else Color(0xFFE5E7EB),
+                                        if (acc != null) Color(acc.gradientEnd.toInt())   else Color(0xFFD1D5DB),
+                                    ))
                                 )
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                         ) {

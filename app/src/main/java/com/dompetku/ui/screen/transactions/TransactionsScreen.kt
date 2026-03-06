@@ -2,6 +2,7 @@ package com.dompetku.ui.screen.transactions
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -60,7 +61,29 @@ fun TransactionsScreen(
             .verticalScroll(rememberScrollState())
             .padding(bottom = 100.dp),
     ) {
-        AppHeader(title = "Transaksi", showSearch = true, showDate = false, onSearchClick = { showSearch = !showSearch })
+        AppHeader(
+            title         = "Transaksi",
+            showSearch    = true,
+            showDate      = false,
+            onSearchClick = { showSearch = !showSearch },
+            trailingContent = {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (state.hidden) GreenLight else Color(0xFFF1F5F9))
+                        .clickable { viewModel.toggleHideBalance() },
+                ) {
+                    Icon(
+                        imageVector = if (state.hidden) PhosphorIcons.Regular.EyeSlash else PhosphorIcons.Regular.Eye,
+                        contentDescription = null,
+                        tint     = if (state.hidden) GreenPrimary else TextMedium,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            },
+        )
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Spacer(Modifier.height(8.dp))

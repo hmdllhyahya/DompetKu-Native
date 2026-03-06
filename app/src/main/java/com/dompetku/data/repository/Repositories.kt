@@ -106,13 +106,17 @@ class AccountRepository @Inject constructor(
     suspend fun deleteAll()                    { dao.deleteAll() }
 
     suspend fun adjustBalance(accountId: String, delta: Long) {
-        val acc = dao.getById(accountId) ?: return
-        dao.update(acc.copy(balance = acc.balance + delta))
+        dao.incrementBalance(accountId, delta)
     }
 
     suspend fun applyTransfer(fromId: String, toId: String, amount: Long, adminFee: Long) {
-        adjustBalance(fromId, -(amount + adminFee))
-        adjustBalance(toId, +amount)
+        if (fromId.isBlank() || toId.isBlank() || fromId == toId) return
+        dao.applyTransferBalance(
+            fromId = fromId,
+            toId   = toId,
+            debit  = amount + adminFee,
+            credit = amount,
+        )
     }
 }
 

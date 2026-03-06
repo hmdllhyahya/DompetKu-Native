@@ -37,12 +37,15 @@ import com.dompetku.ui.theme.*
 import com.dompetku.util.PinHasher
 
 private val JOBS = listOf(
-    "Pelajar / Mahasiswa","Karyawan Swasta","PNS / ASN","Wirausaha",
-    "Freelancer","Ibu Rumah Tangga","Profesional (Dokter/Pengacara/dll)","Lainnya",
+    "Pelajar / Mahasiswa", "Guru / Dosen", "PNS / ASN", "Karyawan Swasta",
+    "Wiraswasta / Pengusaha", "Freelancer", "Dokter / Tenaga Medis",
+    "Engineer / Programmer", "Desainer / Kreator", "Buruh / Pekerja Harian",
+    "Ibu Rumah Tangga", "Pensiunan", "Belum Bekerja", "Lainnya",
 )
 private val EDUS = listOf(
-    "SD / Sederajat","SMP / Sederajat","SMA / Sederajat",
-    "D3","S1","S2","S3",
+    "SD / Sederajat", "SMP / Sederajat", "SMA / SMK / Sederajat",
+    "Diploma (D1-D3)", "Sarjana (S1)", "Magister (S2)", "Doktor (S3)",
+    "Tidak Ingin Menyebutkan",
 )
 
 @Composable
@@ -120,7 +123,7 @@ fun ProfileScreen(
                     Text("Edit", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
                 }
             }
-            ProfileCard {
+            ProfileCard(innerPadding = true) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     ProfileInfoChip("UMUR",
                         if (profile.age > 0) "${profile.age} tahun" else "—",
@@ -376,7 +379,9 @@ private fun EditProfileSheet(
 
             Text("PEKERJAAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
             Spacer(Modifier.height(4.dp))
-            var expandJob by remember { mutableStateOf(false) }
+            var expandJob   by remember { mutableStateOf(false) }
+            var customJob   by remember { mutableStateOf(if (job !in JOBS && job.isNotEmpty()) job else "") }
+            val isCustomJob  = job == "Lainnya" || (job.isNotEmpty() && job !in JOBS)
             ExposedDropdownMenuBox(expanded = expandJob, onExpandedChange = { expandJob = it }) {
                 OutlinedTextField(
                     value = job.ifEmpty { "— Pilih —" }, onValueChange = {}, readOnly = true,
@@ -391,6 +396,22 @@ private fun EditProfileSheet(
                 ExposedDropdownMenu(expanded = expandJob, onDismissRequest = { expandJob = false }, modifier = Modifier.background(CardWhite)) {
                     JOBS.forEach { opt -> DropdownMenuItem(text = { Text(opt, fontSize = 13.sp) }, onClick = { job = opt; expandJob = false }) }
                 }
+            }
+            // Free-text input when "Lainnya" selected
+            if (isCustomJob) {
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value         = customJob,
+                    onValueChange = { customJob = it; job = it.ifEmpty { "Lainnya" } },
+                    placeholder   = { Text("Tulis pekerjaanmu...", color = TextLight) },
+                    singleLine    = true,
+                    shape         = RoundedCornerShape(12.dp),
+                    colors        = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor   = GreenPrimary, unfocusedBorderColor = Color(0xFFE5E7EB),
+                        focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             Spacer(Modifier.height(12.dp))
@@ -469,27 +490,31 @@ private fun LanguageToggle(lang: String, onToggle: (String) -> Unit) {
 }
 
 @Composable
-private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
+private fun ProfileInfoChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFF1F5F9))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = TextLight, letterSpacing = 0.8.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(value, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ProfileCard(
+    innerPadding: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 4.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(CardWhite),
+            .background(CardWhite)
+            .then(if (innerPadding) Modifier.padding(14.dp) else Modifier),
         content = content,
     )
-}
-
-@Composable
-private fun ProfileInfoChip(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFFF8FAFC))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
-        Spacer(Modifier.height(2.dp))
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
-    }
 }

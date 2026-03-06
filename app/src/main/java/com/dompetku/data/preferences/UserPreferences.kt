@@ -85,6 +85,9 @@ class UserPreferences @Inject constructor(
     suspend fun setHideBalance(hide: Boolean) =
         store.edit { it[HIDE_BALANCE] = hide }
 
+    suspend fun toggleHideBalance() =
+        store.edit { it[HIDE_BALANCE] = !(it[HIDE_BALANCE] ?: false) }
+
     suspend fun setLang(lang: String) =
         store.edit { it[LANG] = lang }
 

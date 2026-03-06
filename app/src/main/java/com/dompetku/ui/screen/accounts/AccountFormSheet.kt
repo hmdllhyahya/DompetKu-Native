@@ -117,7 +117,7 @@ fun AccountFormSheet(
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically,
-                modifier              = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+                modifier              = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 14.dp),
             ) {
                 Text(
                     text       = if (isNew) "Tambah Akun" else "Edit Akun",

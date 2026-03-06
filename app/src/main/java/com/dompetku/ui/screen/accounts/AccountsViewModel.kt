@@ -2,6 +2,7 @@ package com.dompetku.ui.screen.accounts
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dompetku.data.preferences.UserPreferences
 import com.dompetku.data.repository.AccountRepository
 import com.dompetku.data.repository.TransactionRepository
 import com.dompetku.domain.model.Account
@@ -16,7 +17,14 @@ import javax.inject.Inject
 class AccountsViewModel @Inject constructor(
     private val accountRepo:     AccountRepository,
     private val transactionRepo: TransactionRepository,
+    private val userPrefs:       UserPreferences,
 ) : ViewModel() {
+
+    val hideBalance: StateFlow<Boolean> = userPrefs.appPrefsFlow
+        .map { it.hideBalance }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun toggleHideBalance() { viewModelScope.launch { userPrefs.toggleHideBalance() } }
 
     val accounts: StateFlow<List<Account>> = accountRepo.allAccounts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())

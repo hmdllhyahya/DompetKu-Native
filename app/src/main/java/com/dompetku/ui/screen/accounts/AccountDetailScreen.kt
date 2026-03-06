@@ -25,7 +25,11 @@ import com.dompetku.domain.model.Account
 import com.dompetku.domain.model.AccountType
 import com.dompetku.domain.model.Transaction
 import com.dompetku.domain.model.TransactionType
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.dompetku.ui.components.*
+import com.dompetku.ui.screen.transactions.TransactionDetailSheet
+import com.dompetku.ui.screen.transactions.TransactionFormSheet
+import com.dompetku.ui.screen.transactions.TransactionsViewModel
 import com.dompetku.ui.theme.*
 import com.dompetku.util.CurrencyFormatter
 import com.dompetku.util.DeepLinkHelper
@@ -38,8 +42,13 @@ fun AccountDetailScreen(
     accounts:     List<Account> = emptyList(),
     onBack:       () -> Unit,
     onEdit:       (Account) -> Unit,
+    onTxnClick:   (Transaction) -> Unit = {},
 ) {
-    val context  = LocalContext.current
+    val context     = LocalContext.current
+    val txnVm: TransactionsViewModel = hiltViewModel()
+    var detailTxn    by remember { mutableStateOf<Transaction?>(null) }
+    var editingTxn   by remember { mutableStateOf<Transaction?>(null) }
+
     val txns     = remember(transactions, account.id) {
         transactions.filter { it.accountId == account.id || it.toId == account.id }
             .sortedByDescending { it.date + it.time }
@@ -112,6 +121,7 @@ fun AccountDetailScreen(
                     Icon(
                         imageVector = when (account.type) {
                             AccountType.ewallet -> PhosphorIcons.Regular.DeviceMobile
+                            AccountType.emoney  -> PhosphorIcons.Regular.WifiHigh
                             AccountType.cash    -> PhosphorIcons.Regular.Wallet
                             AccountType.savings -> PhosphorIcons.Regular.PiggyBank
                             else                -> PhosphorIcons.Regular.CreditCard
@@ -220,11 +230,31 @@ fun AccountDetailScreen(
                             type          = txn.type,
                             amount        = txn.amount,
                             isLast        = i == txns.lastIndex,
-                            onClick       = {},
+                            onClick       = { detailTxn = txn },
                         )
                     }
                 }
             }
         }
+    }
+
+    // ── Transaction detail sheet (local) ──────────────────────────────────────
+    detailTxn?.let { txn ->
+        TransactionDetailSheet(
+            txn       = txn,
+            accounts  = accounts,
+            onDismiss = { detailTxn = null },
+            onEdit    = { t -> editingTxn = t; detailTxn = null },
+            onDelete  = { t -> txnVm.deleteTransaction(t); detailTxn = null },
+        )
+    }
+
+    editingTxn?.let { old ->
+        TransactionFormSheet(
+            initial   = old,
+            accounts  = accounts,
+            onDismiss = { editingTxn = null },
+            onSave    = { new -> txnVm.updateTransaction(old, new); editingTxn = null },
+        )
     }
 }

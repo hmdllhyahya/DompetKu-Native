@@ -83,6 +83,17 @@ interface AccountDao {
 
     @Query("SELECT SUM(balance) FROM accounts")
     fun observeTotalBalance(): Flow<Long?>
+
+    /** Atomic balance increment — avoids read-modify-write race conditions */
+    @Query("UPDATE accounts SET balance = balance + :delta WHERE id = :id")
+    suspend fun incrementBalance(id: String, delta: Long)
+
+    /** Atomic transfer via direct SQL — no read-modify-write race condition */
+    @Transaction
+    suspend fun applyTransferBalance(fromId: String, toId: String, debit: Long, credit: Long) {
+        incrementBalance(fromId, -debit)
+        incrementBalance(toId,   +credit)
+    }
 }
 
 // ── AttachmentDao ─────────────────────────────────────────────────────────────

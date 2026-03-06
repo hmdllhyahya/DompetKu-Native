@@ -68,7 +68,7 @@ fun TransferSheet(
         ) {
             // Header
             Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp)) {
                 Text("Transfer Antar Akun", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
                 IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(Color(0xFFE5E7EB))) {
                     Icon(PhosphorIcons.Regular.X, null, tint = TextDark, modifier = Modifier.size(14.dp))

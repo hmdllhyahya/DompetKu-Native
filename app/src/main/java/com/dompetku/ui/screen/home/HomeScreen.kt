@@ -4,15 +4,24 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.launch
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -150,48 +159,107 @@ fun HomeScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // ── Budget + Predictor carousel ───────────────────────────────────
-            var carouselPage by remember { mutableIntStateOf(0) }
+            // ── Budget + Predictor carousel (real-time finger tracking) ────────
+            var carouselPage  by remember { mutableIntStateOf(0) }
+            var showPredictor by remember { mutableStateOf(false) }
+            val scope          = rememberCoroutineScope()
+            val offsetPx       = remember { androidx.compose.animation.core.Animatable(0f) }
+            var cardWidthPx    by remember { mutableIntStateOf(0) }
+
             Column(modifier = Modifier.fillMaxWidth()) {
-                androidx.compose.animation.AnimatedContent(
-                    targetState = carouselPage,
-                    transitionSpec = {
-                        if (targetState > initialState)
-                            (androidx.compose.animation.slideInHorizontally { it } + androidx.compose.animation.fadeIn()) togetherWith
-                            (androidx.compose.animation.slideOutHorizontally { -it } + androidx.compose.animation.fadeOut())
-                        else
-                            (androidx.compose.animation.slideInHorizontally { -it } + androidx.compose.animation.fadeIn()) togetherWith
-                            (androidx.compose.animation.slideOutHorizontally { it } + androidx.compose.animation.fadeOut())
-                    },
-                    label = "carousel",
-                    modifier = Modifier.pointerInput(Unit) {
-                        detectHorizontalDragGestures { _, dragAmount ->
-                            if (dragAmount < -40f && carouselPage < 1) carouselPage++
-                            else if (dragAmount > 40f && carouselPage > 0) carouselPage--
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { cardWidthPx = it.width }
+                        .pointerInput(carouselPage) {
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    val threshold = cardWidthPx * 0.25f
+                                    if (offsetPx.value < -threshold && carouselPage < 1) {
+                                        carouselPage = 1
+                                    } else if (offsetPx.value > threshold && carouselPage > 0) {
+                                        carouselPage = 0
+                                    }
+                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                },
+                                onDragCancel = {
+                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                },
+                                onHorizontalDrag = { _, delta ->
+                                    val newOffset = (offsetPx.value + delta)
+                                        .coerceIn(
+                                            if (carouselPage >= 1) -cardWidthPx.toFloat() else -cardWidthPx * 0.4f,
+                                            if (carouselPage <= 0) cardWidthPx.toFloat()  else  cardWidthPx * 0.4f,
+                                        )
+                                    scope.launch { offsetPx.snapTo(newOffset) }
+                                },
+                            )
+                        },
+                ) {
+                    // Previous card (peeks from left when swiping right on page 1)
+                    if (carouselPage == 1) {
+                        Box(
+                            modifier = Modifier
+                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value - cardWidthPx).toInt(), 0) }
+                                .fillMaxWidth(),
+                        ) {
+                            BudgetCard(
+                                budgetPct    = budgetPct,
+                                monthExp     = state.monthExpense,
+                                budget       = state.monthlyBudget,
+                                todayRemain  = todayRemain,
+                                todayExpense = state.todayExpense,
+                                daysLeft     = daysLeft,
+                                hidden       = hidden,
+                                onEdit       = { showBudgetSheet = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
                         }
-                    },
-                ) { page ->
-                    if (page == 0) {
-                        BudgetCard(
-                            budgetPct    = budgetPct,
-                            monthExp     = state.monthExpense,
-                            budget       = state.monthlyBudget,
-                            todayRemain  = todayRemain,
-                            todayExpense = state.todayExpense,
-                            daysLeft     = daysLeft,
-                            hidden       = hidden,
-                            onEdit       = { showBudgetSheet = true },
-                            modifier     = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        PredictorCard(
-                            monthExpense = state.monthExpense,
-                            daysLeft     = daysLeft,
-                            modifier     = Modifier.fillMaxWidth(),
-                        )
+                    }
+                    // Current card
+                    Box(
+                        modifier = Modifier
+                            .offset { androidx.compose.ui.unit.IntOffset(offsetPx.value.toInt(), 0) }
+                            .fillMaxWidth(),
+                    ) {
+                        if (carouselPage == 0) {
+                            BudgetCard(
+                                budgetPct    = budgetPct,
+                                monthExp     = state.monthExpense,
+                                budget       = state.monthlyBudget,
+                                todayRemain  = todayRemain,
+                                todayExpense = state.todayExpense,
+                                daysLeft     = daysLeft,
+                                hidden       = hidden,
+                                onEdit       = { showBudgetSheet = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            PredictorCard(
+                                monthExpense = state.monthExpense,
+                                daysLeft     = daysLeft,
+                                onTap        = { showPredictor = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    // Next card (peeks from right when swiping left on page 0)
+                    if (carouselPage == 0) {
+                        Box(
+                            modifier = Modifier
+                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value + cardWidthPx).toInt(), 0) }
+                                .fillMaxWidth(),
+                        ) {
+                            PredictorCard(
+                                monthExpense = state.monthExpense,
+                                daysLeft     = daysLeft,
+                                onTap        = { showPredictor = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
-                // Dot indicator + tap to switch
+                // Dot indicator
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -203,10 +271,22 @@ fun HomeScreen(
                                 .size(if (i == carouselPage) 18.dp else 6.dp, 6.dp)
                                 .clip(RoundedCornerShape(3.dp))
                                 .background(if (i == carouselPage) GreenPrimary else Color(0xFFD1D5DB))
-                                .clickable { carouselPage = i },
+                                .clickable {
+                                    carouselPage = i
+                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                },
                         )
                     }
                 }
+            }
+
+            // ── Predictor detail popup ────────────────────────────────────────
+            if (showPredictor) {
+                PredictorDetailSheet(
+                    monthExpense = state.monthExpense,
+                    daysLeft     = daysLeft,
+                    onDismiss    = { showPredictor = false },
+                )
             }
 
             // ── Akun Saya ────────────────────────────────────────────────────
@@ -337,7 +417,7 @@ private fun BudgetCard(
 
 // ── Predictor card ────────────────────────────────────────────────────────────
 @Composable
-private fun PredictorCard(monthExpense: Long, daysLeft: Int, modifier: Modifier = Modifier) {
+private fun PredictorCard(monthExpense: Long, daysLeft: Int, onTap: () -> Unit = {}, modifier: Modifier = Modifier) {
     val elapsed  = (30 - daysLeft).coerceAtLeast(1)
     val avgDaily = monthExpense / elapsed
     val estMonth = avgDaily * 30
@@ -346,18 +426,131 @@ private fun PredictorCard(monthExpense: Long, daysLeft: Int, modifier: Modifier 
             .shadow(2.dp, RoundedCornerShape(18.dp))
             .clip(RoundedCornerShape(18.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
+            .clickable(onClick = onTap)
             .padding(16.dp),
     ) {
         Column {
             Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Text("Prediksi Keuangan", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
+                    Box(
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) { Text("Detail ›", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFA7F3D0)) }
+                }
             }
             Text("Estimasi pengeluaran bulan ini", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DarkStat("AVG/HARI",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
                 DarkStat("EST. BULAN", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
                 DarkStat("SISA HARI",  "$daysLeft hr",                        Color.White,        Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+// ── Predictor detail bottom sheet ──────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: () -> Unit) {
+    val elapsed      = (30 - daysLeft).coerceAtLeast(1)
+    val avgDaily     = monthExpense / elapsed
+    val estMonth     = avgDaily * 30
+    val daysInMonth  = 30
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState       = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor   = PageBg,
+        shape            = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(top = 4.dp, bottom = 24.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically,
+                modifier              = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            ) {
+                Column {
+                    Text("Prediksi Keuangan", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text("Estimasi pengeluaran bulanmu", fontSize = 12.sp, color = TextLight)
+                }
+                IconButton(
+                    onClick  = onDismiss,
+                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(Color(0xFFE5E7EB)),
+                ) {
+                    Icon(PhosphorIcons.Regular.X, null, tint = TextDark, modifier = Modifier.size(14.dp))
+                }
+            }
+
+            // Stats row
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
+                    .padding(16.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DarkStat("AVG/HARI",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+                    DarkStat("EST. BULAN", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
+                    DarkStat("SISA HARI",  "$daysLeft hr",                        Color.White,        Modifier.weight(1f))
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Explanation cards
+            listOf(
+                Triple(
+                    "Estimasi Pengeluaran Bulanan",
+                    PhosphorIcons.Regular.ChartLine,
+                    "Berdasarkan rata-rata harian pengeluaranmu selama $elapsed hari terakhir, diproyeksikan total pengeluaran bulan ini akan mencapai ${CurrencyFormatter.format(estMonth)}. Angka ini akan terus diperbarui setiap hari.",
+                ),
+                Triple(
+                    "Rata-Rata per Hari (AVG/HARI)",
+                    PhosphorIcons.Regular.CalendarBlank,
+                    "Rata-rata kamu mengeluarkan ${CurrencyFormatter.format(avgDaily)} per hari bulan ini. Dihitung dari total pengeluaran ${CurrencyFormatter.format(monthExpense)} dibagi $elapsed hari yang telah berlalu.",
+                ),
+                Triple(
+                    "Estimasi Bulan (EST. BULAN)",
+                    PhosphorIcons.Regular.TrendUp,
+                    "Proyeksi total pengeluaran jika pola belanjamu tetap sama hingga akhir bulan: ${CurrencyFormatter.format(avgDaily)} × $daysInMonth hari = ${CurrencyFormatter.format(estMonth)}.",
+                ),
+                Triple(
+                    "Sisa Hari",
+                    PhosphorIcons.Regular.Timer,
+                    "Masih ada $daysLeft hari tersisa di bulan ini. Kamu punya kesempatan untuk menyesuaikan pola pengeluaranmu agar estimasi akhir bulan lebih sesuai target.",
+                ),
+            ).forEach { (title, icon, desc) ->
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(CardWhite)
+                        .padding(14.dp)
+                        .padding(bottom = 4.dp),
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(GreenLight),
+                    ) {
+                        Icon(icon, null, tint = GreenPrimary, modifier = Modifier.size(18.dp))
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(title, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                        Spacer(Modifier.height(3.dp))
+                        Text(desc, fontSize = 11.sp, color = TextMedium, lineHeight = 16.sp)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }

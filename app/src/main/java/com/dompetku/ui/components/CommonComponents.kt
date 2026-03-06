@@ -132,6 +132,7 @@ fun AppHeader(
     showLock:     Boolean = false,
     onSearchClick: () -> Unit = {},
     onLockClick:   () -> Unit = {},
+    trailingContent: @Composable (() -> Unit)? = null,
 ) {
     val today = remember {
         LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale("id", "ID")))
@@ -190,6 +191,7 @@ fun AppHeader(
                         Icon(PhosphorIcons.Regular.Lock, null, tint = TextDark, modifier = Modifier.size(15.dp))
                     }
                 }
+                trailingContent?.invoke()
             }
         }
     }
