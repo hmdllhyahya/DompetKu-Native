@@ -175,8 +175,8 @@ fun AppHeader(
                     IconButton(
                         onClick  = onSearchClick,
                         modifier = Modifier
-                            .size(36.dp)
-                            .background(Color(0xFFF1F5F9), RoundedCornerShape(10.dp)),
+                            .size(32.dp)
+                            .background(Color(0xFFF1F5F9), RoundedCornerShape(9.dp)),
                     ) {
                         Icon(PhosphorIcons.Regular.MagnifyingGlass, null, tint = TextDark, modifier = Modifier.size(15.dp))
                     }

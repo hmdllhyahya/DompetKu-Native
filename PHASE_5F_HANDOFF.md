@@ -1,4 +1,10 @@
 # DompetKu — Phase 5F Handoff Report
+
+> ⚡ **PERFORMANCE FIX APPLIED** — 2026-03-07 (session lanjutan)
+> Lihat Section 7 untuk detail lengkap.
+
+---
+
 **Dibuat:** 2026-03-07  
 **Dari:** Phase 5F (Session selesai — Export/Import)  
 **Untuk:** Phase 5F lanjutan / Phase 5G
@@ -154,6 +160,33 @@ Import sebelumnya hanya bisa baca file format persis DompetKu. File dari Money M
 - `enableEdgeToEdge()` sudah DIHAPUS — jangan tambahkan lagi
 - `Toggle` composable: `onToggle = { }` tanpa parameter
 - `SmartTransaction` — tidak perlu unused import `SmartTransaction` di ViewModel, bisa dihapus jika Kotlin complain
+
+---
+
+## 7. ⚡ PERFORMANCE FIX (2026-03-07)
+
+### Root Causes yang Diselesaikan
+
+| # | Problem | Root Cause | Fix |
+|---|---|---|---|
+| 1 | TransactionsScreen lag parah 1000+ data | `Column + verticalScroll` render SEMUA row sekaligus — tidak ada virtualisasi | Ganti ke `LazyColumn`, hanya render visible items |
+| 2 | Filtering/sorting blokir main thread | `filtered()` + `groupBy()` dipanggil langsung di Composable saat recompose | Pindah ke ViewModel `combine` + `flowOn(Dispatchers.Default)` |
+| 3 | HomeViewModel load 1000+ transaksi hanya untuk stats bulan ini | `allTransactions` (semua data) difilter in-memory | Pakai `transactionsInRange(monthStart, today)` + `observeRecent(10)` |
+
+### Files Changed
+| File | Perubahan |
+|---|---|
+| `data/local/dao/Daos.kt` | Tambah `observeRecent(limit)` query |
+| `data/repository/Repositories.kt` | Expose `observeRecent(limit)` |
+| `ui/screen/home/HomeViewModel.kt` | Ganti ke `transactionsInRange` + `observeRecent(10)` + `flowOn(Default)` |
+| `ui/screen/transactions/TransactionsViewModel.kt` | `TxnUiState` sekarang punya `grouped`, `totalCount`, `totalIncome`, `totalExpense`, `accountMap`. `applyFilters()` private, jalan di background thread |
+| `ui/screen/transactions/TransactionsScreen.kt` | `Column+verticalScroll` → `LazyColumn`. Baca pre-computed state dari VM. Account lookup pakai `accountMap[id]` O(1) bukan `find {}` O(n) |
+
+### Catatan Teknis
+- `TxnUiState.allTxns` **dihapus** — jangan di-restore, gunakan `grouped` atau `totalCount`
+- Public `filtered(state)` function **dihapus** dari ViewModel — replaced dengan private `applyFilters()`
+- `HomeViewModel.today` dan `monthStart` sekarang adalah `private val` di level class (bukan dihitung ulang tiap emit)
+- `LazyColumn` item keys: `"hdr_$date"` dan `"grp_$date"` — stable keys, tidak ada recompose unnecessary
 
 ---
 

@@ -122,6 +122,11 @@ dependencies {
     implementation(libs.gson)
     implementation("com.squareup:javapoet:1.13.0")
 
+    // Test
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+
     configurations.all {
         resolutionStrategy {
             force("com.squareup:javapoet:1.13.0")

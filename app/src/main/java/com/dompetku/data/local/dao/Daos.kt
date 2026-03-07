@@ -13,6 +13,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY date DESC, time DESC")
     fun observeAll(): Flow<List<TransactionEntity>>
 
+    @Query("SELECT * FROM transactions ORDER BY date DESC, time DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<TransactionEntity>>
+
     @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): TransactionEntity?
 

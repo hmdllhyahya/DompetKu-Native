@@ -345,6 +345,9 @@ class ExportImportManager @Inject constructor(
         }.onFailure { e -> errors.add("Gagal baca file: ${e.message}") }
         stream.close()
 
+        // BUG-04: merge Transfer In/Out pairs dari Money Manager
+        val mergedTransactions = SmartImportEngine.mergeTransferPairs(transactions)
+
         val detectedAccounts = accountRawNames.map { (rawName, count) ->
             val (match, score) = SmartImportEngine.matchAccount(rawName, existingAccounts)
             DetectedAccount(rawName, count, match, score)
@@ -354,7 +357,7 @@ class ExportImportManager @Inject constructor(
             .associateWith { SmartImportEngine.mapCategory(it) }
 
         SmartImportResult(
-            transactions     = transactions,
+            transactions     = mergedTransactions,
             detectedAccounts = detectedAccounts,
             categoryMappings = categoryMappings,
             autoSignCount    = autoSignCount,
@@ -387,6 +390,34 @@ internal object SmartImportEngine {
         val extras:   Map<Int, String> = emptyMap(),
     )
 
+    // Kolom yang dikenal tapi sengaja diabaikan — TIDAK di-append ke note
+    private val IGNORED_HEADERS = setOf(
+        "currency", "mata uang", "currencies", "foreign currency",
+        "id", "uuid", "ref", "reference", "no", "num", "number", "#",
+        "subkategori", "subcategory", "sub category", "sub-category",
+        "creator", "created_by", "modified", "modified_by",
+        "recurring", "repeat", "attachment", "image", "photo",
+        "exchange rate", "kurs", "foreign amount", "converted amount",
+        "status", "cleared", "reconciled",
+    )
+
+    // Kategori yang selalu income
+    private val INCOME_CATEGORIES = setOf(
+        "gaji", "salary", "wage", "payroll", "upah", "honorarium",
+        "freelance", "project income", "jasa",
+        "hadiah", "gift", "bonus",
+        "investasi", "invest", "dividend", "dividen", "profit", "return",
+        "pemasukan", "income", "pendapatan", "revenue",
+        "cashback", "refund", "reimburse",
+    )
+
+    // Keyword yang menandakan transfer
+    private val TRANSFER_KEYWORDS = setOf(
+        "transfer", "transfer out", "transfer in", "pindah", "kirim",
+        "top up", "topup", "isi saldo", "tarik tunai", "withdraw",
+        "antar rekening", "antar akun",
+    )
+
     private enum class Role { DATE, TIME, AMOUNT, DEBIT, CREDIT, CATEGORY, NOTE, ACCOUNT, TYPE }
 
     private val ROLE_KEYWORDS: Map<Role, Set<String>> = mapOf(
@@ -398,7 +429,9 @@ internal object SmartImportEngine {
         Role.CATEGORY to setOf("category","kategori","kat","jenis","grup","group","sub","subcategory","tipe","class"),
         Role.NOTE     to setOf("note","catatan","keterangan","memo","description","deskripsi","remark","ket","detail","narasi"),
         Role.ACCOUNT  to setOf("account","akun","wallet","dompet","source","from","sumber","rekening","account_name"),
-        Role.TYPE     to setOf("type","tipe","direction","flow","in_out","income_expense","jenis_transaksi"),
+        Role.TYPE     to setOf("type","tipe","direction","flow","in_out","income_expense",
+                              "jenis_transaksi","income/expense","expense/income","transaction type",
+                              "jenis","kind","inout","in/out"),
     )
 
     fun detectColumns(headerRow: Row): ColumnMap {
@@ -475,11 +508,19 @@ internal object SmartImportEngine {
             } else {
                 amount = rawAmt.toLong()
                 val ts = colMap.txnType?.let { row.str(it) }?.lowercase()?.trim()
-                type = when (ts) {
-                    "expense","pengeluaran","keluar","out","debit","-","e","dr" -> TransactionType.expense
-                    "income","pemasukan","masuk","in","credit","+","i","cr"   -> TransactionType.income
-                    "transfer"                                                  -> TransactionType.transfer
-                    else                                                        -> TransactionType.expense
+                val rawCatForType = colMap.category?.let { row.str(it) }?.lowercase()?.trim() ?: ""
+                type = when {
+                    // Explicit TYPE column values
+                    ts != null && ts in setOf("expense","pengeluaran","keluar","out","debit","-","e","dr","expenses") ->
+                        TransactionType.expense
+                    ts != null && ts in setOf("income","pemasukan","masuk","in","credit","+","i","cr","incomes") ->
+                        TransactionType.income
+                    ts != null && ts.contains("transfer") -> TransactionType.transfer
+                    // Fallback: infer from category name (BUG-02 fix)
+                    TRANSFER_KEYWORDS.any { rawCatForType.contains(it) } -> TransactionType.transfer
+                    INCOME_CATEGORIES.any { rawCatForType.contains(it) || rawCatForType == it } -> TransactionType.income
+                    // Final fallback
+                    else -> TransactionType.expense
                 }
             }
         }
@@ -492,6 +533,9 @@ internal object SmartImportEngine {
         val rawAccount  = colMap.account?.let { row.str(it) }?.ifBlank { null } ?: "Akun Impor"
 
         val extraParts = colMap.extras.mapNotNull { (ci, hdr) ->
+            // BUG-03 fix: skip kolom yang ada di ignore list
+            if (IGNORED_HEADERS.any { hdr.lowercase().trim() == it || hdr.lowercase().trim().contains(it) })
+                return@mapNotNull null
             row.str(ci)?.takeIf { it.isNotBlank() }?.let { v -> "[$hdr: $v]" }
         }
         val fullNote = listOfNotNull(
@@ -643,6 +687,62 @@ internal object SmartImportEngine {
         "dividen" to "Investasi","profit" to "Investasi","saham" to "Investasi",
         "stock" to "Investasi","reksadana" to "Investasi",
     )
+
+    // BUG-04: Detect dan merge pasangan Transfer In/Out dari Money Manager
+    // Money Manager catat 2 baris: expense (from account) + income (to account)
+    // Kalau amount sama + tanggal sama + keduanya punya transfer keyword di category → merge jadi 1 transfer
+    fun mergeTransferPairs(txns: List<SmartTransaction>): List<SmartTransaction> {
+        if (txns.isEmpty()) return txns
+
+        // Pisahkan kandidat transfer (punya transfer keyword di category)
+        val transferCandidates = txns.filter { t ->
+            SmartImportEngine.TRANSFER_KEYWORDS.any {
+                t.category.lowercase().contains(it) ||
+                t.originalCategory.lowercase().contains(it)
+            }
+        }.toMutableList()
+
+        if (transferCandidates.isEmpty()) return txns
+
+        val consumed = mutableSetOf<String>()
+        val merged   = mutableListOf<SmartTransaction>()
+
+        for (candidate in transferCandidates) {
+            if (candidate.tempId in consumed) continue
+            // Cari pasangan: amount sama, tanggal sama, tipe berlawanan
+            val partner = transferCandidates.firstOrNull { other ->
+                other.tempId != candidate.tempId &&
+                other.tempId !in consumed &&
+                other.amount == candidate.amount &&
+                other.date   == candidate.date &&
+                other.suggestedType != candidate.suggestedType
+            }
+            if (partner != null) {
+                // expense = from account, income = to account
+                val fromTxn = if (candidate.suggestedType == TransactionType.expense) candidate else partner
+                val toTxn   = if (candidate.suggestedType == TransactionType.income)  candidate else partner
+                merged.add(
+                    fromTxn.copy(
+                        suggestedType  = TransactionType.transfer,
+                        category       = "Transfer",
+                        note           = listOfNotNull(
+                            fromTxn.note.takeIf { it.isNotBlank() },
+                            toTxn.rawAccountName.takeIf { it.isNotBlank() && it != "Akun Impor" }
+                                ?.let { "→ $it" },
+                        ).joinToString(" "),
+                        // rawAccountName tetap dari account sumber (fromTxn)
+                    )
+                )
+                consumed += candidate.tempId
+                consumed += partner.tempId
+            }
+        }
+
+        // Kumpulkan semua: non-transfer + transfer yang tidak punya pair + hasil merge
+        val result = txns.filter { it.tempId !in consumed }.toMutableList()
+        result.addAll(merged)
+        return result.sortedByDescending { it.date + it.time }
+    }
 
     fun mapCategory(raw: String): String {
         if (raw.isBlank()) return "Lainnya"

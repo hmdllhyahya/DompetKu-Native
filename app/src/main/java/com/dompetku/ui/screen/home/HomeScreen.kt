@@ -16,6 +16,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -71,14 +72,11 @@ fun HomeScreen(
     fun fmt(v: Long)  = if (hidden) "••••••" else CurrencyFormatter.format(v)
     fun fmtC(v: Long) = if (hidden) "••••"   else CurrencyFormatter.compact(v)
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PageBg)
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 100.dp),
+    LazyColumn(
+        modifier       = Modifier.fillMaxSize().background(PageBg),
+        contentPadding = PaddingValues(bottom = 100.dp),
     ) {
-        // ── Greeting bar ──────────────────────────────────────────────────────
+        item {
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically,
@@ -107,11 +105,13 @@ fun HomeScreen(
                 }
             }
         }
+        } // end item: greeting
 
+        item {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Spacer(Modifier.height(12.dp))
 
-            // ── Total balance card ─────────────────────────────────────────────
+            // Total balance card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -159,12 +159,14 @@ fun HomeScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // ── Budget + Predictor carousel (real-time finger tracking) ────────
+            // Budget + Predictor carousel
             var carouselPage  by remember { mutableIntStateOf(0) }
             var showPredictor by remember { mutableStateOf(false) }
             val scope          = rememberCoroutineScope()
-            val offsetPx       = remember { androidx.compose.animation.core.Animatable(0f) }
+            val offsetPx       = remember { Animatable(0f) }
             var cardWidthPx    by remember { mutableIntStateOf(0) }
+            // BUG-07 fix: only render peek card when actually dragging
+            val isDragging     by remember { derivedStateOf { offsetPx.value != 0f } }
 
             Column(modifier = Modifier.fillMaxWidth()) {
                 Box(
@@ -196,8 +198,8 @@ fun HomeScreen(
                             )
                         },
                 ) {
-                    // Previous card (peeks from left when swiping right on page 1)
-                    if (carouselPage == 1) {
+                    // Previous card: only peek when dragging (BUG-07)
+                    if (carouselPage == 1 && isDragging) {
                         Box(
                             modifier = Modifier
                                 .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value - cardWidthPx).toInt(), 0) }
@@ -243,8 +245,8 @@ fun HomeScreen(
                             )
                         }
                     }
-                    // Next card (peeks from right when swiping left on page 0)
-                    if (carouselPage == 0) {
+                    // Next card: only peek when dragging (BUG-07)
+                    if (carouselPage == 0 && isDragging) {
                         Box(
                             modifier = Modifier
                                 .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value + cardWidthPx).toInt(), 0) }
@@ -280,7 +282,6 @@ fun HomeScreen(
                 }
             }
 
-            // ── Predictor detail popup ────────────────────────────────────────
             if (showPredictor) {
                 PredictorDetailSheet(
                     monthExpense = state.monthExpense,
@@ -289,7 +290,7 @@ fun HomeScreen(
                 )
             }
 
-            // ── Akun Saya ────────────────────────────────────────────────────
+            // Akun Saya
             Spacer(Modifier.height(14.dp))
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
@@ -310,7 +311,7 @@ fun HomeScreen(
                 }
             }
 
-            // ── Transaksi Terbaru ─────────────────────────────────────────────
+            // Transaksi Terbaru
             Spacer(Modifier.height(14.dp))
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
@@ -327,11 +328,11 @@ fun HomeScreen(
                         modifier = Modifier.padding(20.dp).align(Alignment.CenterHorizontally))
                 } else {
                     state.recentTxns.forEachIndexed { i, txn ->
-                        val toAcc = txn.toId?.let { id -> state.accounts.find { it.id == id } }
+                        val toAcc = txn.toId?.let { state.accountMap[it] }           // O(1)
                         TransactionRow(
                             note          = txn.note,
                             category      = txn.category,
-                            accountName   = state.accounts.find { it.id == txn.accountId }?.name ?: "?",
+                            accountName   = state.accountMap[txn.accountId]?.name ?: "?", // O(1)
                             toAccountName = toAcc?.name,
                             date          = txn.date,
                             time          = txn.time,
@@ -346,9 +347,9 @@ fun HomeScreen(
                 }
             }
         }
-    }
+        } // end item: main content
+    } // end LazyColumn
 
-    // ── Budget bottom sheet ───────────────────────────────────────────────────
     if (showBudgetSheet) {
         BudgetSheet(
             current      = state.monthlyBudget,
@@ -449,14 +450,14 @@ private fun PredictorCard(monthExpense: Long, daysLeft: Int, onTap: () -> Unit =
     }
 }
 
-// ── Predictor detail bottom sheet ──────────────────────────────────────────
+// ── Predictor detail sheet ────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: () -> Unit) {
-    val elapsed      = (30 - daysLeft).coerceAtLeast(1)
-    val avgDaily     = monthExpense / elapsed
-    val estMonth     = avgDaily * 30
-    val daysInMonth  = 30
+    val elapsed     = (30 - daysLeft).coerceAtLeast(1)
+    val avgDaily    = monthExpense / elapsed
+    val estMonth    = avgDaily * 30
+    val daysInMonth = 30
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -487,8 +488,6 @@ private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: (
                     Icon(PhosphorIcons.Regular.X, null, tint = TextDark, modifier = Modifier.size(14.dp))
                 }
             }
-
-            // Stats row
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -502,46 +501,24 @@ private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: (
                     DarkStat("SISA HARI",  "$daysLeft hr",                        Color.White,        Modifier.weight(1f))
                 }
             }
-
             Spacer(Modifier.height(16.dp))
-
-            // Explanation cards
             listOf(
-                Triple(
-                    "Estimasi Pengeluaran Bulanan",
-                    PhosphorIcons.Regular.ChartLine,
-                    "Berdasarkan rata-rata harian pengeluaranmu selama $elapsed hari terakhir, diproyeksikan total pengeluaran bulan ini akan mencapai ${CurrencyFormatter.format(estMonth)}. Angka ini akan terus diperbarui setiap hari.",
-                ),
-                Triple(
-                    "Rata-Rata per Hari (AVG/HARI)",
-                    PhosphorIcons.Regular.CalendarBlank,
-                    "Rata-rata kamu mengeluarkan ${CurrencyFormatter.format(avgDaily)} per hari bulan ini. Dihitung dari total pengeluaran ${CurrencyFormatter.format(monthExpense)} dibagi $elapsed hari yang telah berlalu.",
-                ),
-                Triple(
-                    "Estimasi Bulan (EST. BULAN)",
-                    PhosphorIcons.Regular.TrendUp,
-                    "Proyeksi total pengeluaran jika pola belanjamu tetap sama hingga akhir bulan: ${CurrencyFormatter.format(avgDaily)} × $daysInMonth hari = ${CurrencyFormatter.format(estMonth)}.",
-                ),
-                Triple(
-                    "Sisa Hari",
-                    PhosphorIcons.Regular.Timer,
-                    "Masih ada $daysLeft hari tersisa di bulan ini. Kamu punya kesempatan untuk menyesuaikan pola pengeluaranmu agar estimasi akhir bulan lebih sesuai target.",
-                ),
+                Triple("Estimasi Pengeluaran Bulanan", PhosphorIcons.Regular.ChartLine,
+                    "Berdasarkan rata-rata harian pengeluaranmu selama $elapsed hari terakhir, diproyeksikan total pengeluaran bulan ini akan mencapai ${CurrencyFormatter.format(estMonth)}."),
+                Triple("Rata-Rata per Hari (AVG/HARI)", PhosphorIcons.Regular.CalendarBlank,
+                    "Rata-rata kamu mengeluarkan ${CurrencyFormatter.format(avgDaily)} per hari bulan ini. Dihitung dari total ${CurrencyFormatter.format(monthExpense)} dibagi $elapsed hari."),
+                Triple("Estimasi Bulan (EST. BULAN)", PhosphorIcons.Regular.TrendUp,
+                    "Proyeksi total: ${CurrencyFormatter.format(avgDaily)} × $daysInMonth hari = ${CurrencyFormatter.format(estMonth)}."),
+                Triple("Sisa Hari", PhosphorIcons.Regular.Timer,
+                    "Masih ada $daysLeft hari tersisa. Kamu punya kesempatan menyesuaikan pola pengeluaran."),
             ).forEach { (title, icon, desc) ->
                 Row(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(CardWhite)
-                        .padding(14.dp)
-                        .padding(bottom = 4.dp),
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardWhite).padding(14.dp),
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(GreenLight),
-                    ) {
+                    Box(contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(GreenLight)) {
                         Icon(icon, null, tint = GreenPrimary, modifier = Modifier.size(18.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
@@ -646,11 +623,8 @@ private fun BudgetSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            // Header
             Text("Atur Budget Bulanan", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
                 color = TextDark, modifier = Modifier.padding(bottom = 16.dp))
-
-            // Green context card — Total Saldo + sisa hari
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -661,8 +635,7 @@ private fun BudgetSheet(
                 Column {
                     Text("Total Saldo Saat Ini", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
                     Spacer(Modifier.height(4.dp))
-                    Text(CurrencyFormatter.format(totalBalance),
-                        fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                    Text(CurrencyFormatter.format(totalBalance), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                         Text("Sisa hari bulan ini", fontSize = 11.sp, color = Color.White.copy(alpha = 0.75f))
@@ -671,144 +644,89 @@ private fun BudgetSheet(
                 }
             }
             Spacer(Modifier.height(14.dp))
-
-            // ── Target Tabungan slider ────────────────────────────────────────
             WhiteCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment     = Alignment.CenterVertically,
-                    modifier              = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 ) {
-                    Text("TARGET TABUNGAN", fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                        color = TextLight, letterSpacing = 0.6.sp)
-                    Text(
-                        "${targetPct.toInt()}%",
-                        fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = GreenPrimary,
-                    )
+                    Text("TARGET TABUNGAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+                    Text("${targetPct.toInt()}%", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = GreenPrimary)
                 }
                 Slider(
-                    value         = targetPct,
-                    onValueChange = { targetPct = it; useCustom = false },
-                    valueRange    = 0f..70f,
-                    steps         = 13,   // 5% increments: 0,5,10,...,70 = 14 values = 13 steps
-                    colors        = SliderDefaults.colors(
-                        thumbColor       = GreenPrimary,
-                        activeTrackColor = GreenPrimary,
-                        inactiveTrackColor = Color(0xFFE5E7EB),
-                    ),
+                    value = targetPct, onValueChange = { targetPct = it; useCustom = false },
+                    valueRange = 0f..70f, steps = 13,
+                    colors = SliderDefaults.colors(thumbColor = GreenPrimary, activeTrackColor = GreenPrimary, inactiveTrackColor = Color(0xFFE5E7EB)),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                    Text("0%",  fontSize = 10.sp, color = TextLight)
+                    Text("0%", fontSize = 10.sp, color = TextLight)
                     Text("70%", fontSize = 10.sp, color = TextLight)
                 }
             }
-
             Spacer(Modifier.height(10.dp))
-
-            // ── Analisis Rekomendasi (rows, mirip React) ──────────────────────
             WhiteCard(modifier = Modifier.fillMaxWidth()) {
-                Text("ANALISIS REKOMENDASI", fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                    color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 10.dp))
+                Text("ANALISIS REKOMENDASI", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 10.dp))
                 listOf(
                     "Ditabung"             to CurrencyFormatter.format(ditabung),
                     "Bisa Dibelanjakan"    to CurrencyFormatter.format(bisaDibelanjakan),
                     "Budget Final Dipakai" to CurrencyFormatter.format(budgetFinal),
                     "Limit Harian Ideal"   to if (limitHarian > 0) CurrencyFormatter.format(limitHarian) else "Rp 0",
                 ).forEach { (label, value) ->
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    ) {
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                         Text(label, fontSize = 13.sp, color = TextDark)
                         Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
                     }
                 }
             }
             Spacer(Modifier.height(10.dp))
-
-            // ── ATAU MASUKKAN NOMINAL SENDIRI label ────────────────────────────
-            Text("ATAU MASUKKAN NOMINAL SENDIRI", fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 8.dp))
-
-            // ── Checkbox pakai nominal kustom ─────────────────────────────────
+            Text("ATAU MASUKKAN NOMINAL SENDIRI", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 8.dp))
             Row(
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                     .background(if (useCustom) GreenLight else Color(0xFFF8FAFC))
                     .clickable { useCustom = !useCustom }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(if (useCustom) GreenPrimary else Color(0xFFE5E7EB)),
+                    modifier = Modifier.size(20.dp).clip(RoundedCornerShape(5.dp)).background(if (useCustom) GreenPrimary else Color(0xFFE5E7EB)),
                 ) {
-                    if (useCustom) {
-                        Icon(PhosphorIcons.Regular.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))
-                    }
+                    if (useCustom) Icon(PhosphorIcons.Regular.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))
                 }
-                Text(
-                    "Pakai nominal kustom",
-                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                    color    = if (useCustom) GreenPrimary else TextDark,
-                )
+                Text("Pakai nominal kustom", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (useCustom) GreenPrimary else TextDark)
             }
-
-            // Custom input — hanya muncul jika checkbox dicentang
             if (useCustom) {
                 Spacer(Modifier.height(8.dp))
                 WhiteCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("BUDGET KUSTOM (RP)", fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                        color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 6.dp))
+                    Text("BUDGET KUSTOM (RP)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Rp", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextLight)
                         Spacer(Modifier.width(8.dp))
                         OutlinedTextField(
-                            value         = customInput,
+                            value = customInput,
                             onValueChange = { raw ->
                                 val digits = raw.replace("[^0-9]".toRegex(), "")
-                                customInput = if (digits.isEmpty()) "" else {
-                                    digits.toLong().toString().reversed().chunked(3).joinToString(".").reversed()
-                                }
+                                customInput = if (digits.isEmpty()) "" else digits.toLong().toString().reversed().chunked(3).joinToString(".").reversed()
                             },
-                            placeholder     = { Text("0", fontSize = 22.sp, color = TextLight) },
-                            textStyle       = LocalTextStyle.current.copy(fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = TextDark),
+                            placeholder = { Text("0", fontSize = 22.sp, color = TextLight) },
+                            textStyle = LocalTextStyle.current.copy(fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = TextDark),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors          = OutlinedTextFieldDefaults.colors(
-                                unfocusedBorderColor    = Color.Transparent,
-                                focusedBorderColor      = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                focusedContainerColor   = Color.Transparent,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent, focusedContainerColor = Color.Transparent,
                             ),
-                            singleLine = true,
-                            modifier   = Modifier.weight(1f),
+                            singleLine = true, modifier = Modifier.weight(1f),
                         )
                     }
                 }
             }
-
             Spacer(Modifier.height(16.dp))
-
-            // ── Terapkan button ───────────────────────────────────────────────
-            val buttonEnabled = if (useCustom)
-                customInput.replace(".", "").toLongOrNull()?.let { it > 0 } == true
-            else
-                budgetFinal > 0
-
+            val buttonEnabled = if (useCustom) customInput.replace(".", "").toLongOrNull()?.let { it > 0 } == true else budgetFinal > 0
             GreenButton(
                 text    = "Terapkan Budget: ${CurrencyFormatter.compact(budgetFinal)}",
                 enabled = buttonEnabled,
                 onClick = {
-                    val budget = if (useCustom)
-                        customInput.replace(".", "").toLongOrNull() ?: 0L
-                    else
-                        budgetFinal
+                    val budget = if (useCustom) customInput.replace(".", "").toLongOrNull() ?: 0L else budgetFinal
                     onSave(budget, if (useCustom) 0 else targetPct.toInt())
                 },
             )
@@ -816,5 +734,3 @@ private fun BudgetSheet(
         }
     }
 }
-
-

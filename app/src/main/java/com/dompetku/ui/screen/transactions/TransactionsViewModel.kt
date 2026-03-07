@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
+
 package com.dompetku.ui.screen.transactions
 
 import androidx.lifecycle.ViewModel
@@ -13,6 +15,7 @@ import com.dompetku.domain.model.TransactionType
 import com.dompetku.util.DateUtils
 import java.util.UUID
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -29,10 +32,14 @@ data class TxnFilters(
 )
 
 data class TxnUiState(
-    val allTxns:  List<Transaction> = emptyList(),
-    val accounts: List<Account>     = emptyList(),
-    val hidden:   Boolean           = false,
-    val filters:  TxnFilters        = TxnFilters(),
+    val grouped:      List<Pair<String, List<Transaction>>> = emptyList(),
+    val accounts:     List<Account>                        = emptyList(),
+    val accountMap:   Map<String, Account>                 = emptyMap(),
+    val hidden:       Boolean                              = false,
+    val filters:      TxnFilters                           = TxnFilters(),
+    val totalCount:   Int                                  = 0,
+    val totalIncome:  Long                                 = 0L,
+    val totalExpense: Long                                 = 0L,
 )
 
 @HiltViewModel
@@ -58,16 +65,44 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    private val _filters = MutableStateFlow(TxnFilters())
+    private val _filters     = MutableStateFlow(TxnFilters())
+    private val _searchQuery  = MutableStateFlow("")
+
+    // Exposed directly so TextField can bind instantly (no flowOn delay)
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    // Merge filters + debounced search — heavy ops stay on Default thread
+    private val effectiveFilters: Flow<TxnFilters> = combine(
+        _filters,
+        _searchQuery.debounce(200),
+    ) { f, q -> f.copy(search = q) }
 
     val uiState: StateFlow<TxnUiState> = combine(
         transactionRepo.allTransactions,
         accountRepo.allAccounts,
         userPrefs.appPrefsFlow,
-        _filters,
+        effectiveFilters,
     ) { txns, accounts, prefs, filters ->
-        TxnUiState(allTxns = txns, accounts = accounts, hidden = prefs.hideBalance, filters = filters)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TxnUiState())
+        val filtered    = applyFilters(txns, accounts, filters)
+        val totalInc    = filtered.filter { it.type == TransactionType.income  && it.category != "Penyesuaian Saldo" }.sumOf { it.amount }
+        val totalExp    = filtered.filter { it.type == TransactionType.expense && it.category != "Penyesuaian Saldo" }.sumOf { it.amount }
+        val grouped     = filtered
+            .groupBy { it.date }
+            .entries
+            .sortedByDescending { it.key }
+            .map { (date, list) -> date to list }
+        TxnUiState(
+            grouped      = grouped,
+            accounts     = accounts,
+            accountMap   = accounts.associateBy { it.id },
+            hidden       = prefs.hideBalance,
+            filters      = filters,
+            totalCount   = filtered.size,
+            totalIncome  = totalInc,
+            totalExpense = totalExp,
+        )
+    }.flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TxnUiState())
 
     fun toggleHideBalance() { viewModelScope.launch { userPrefs.toggleHideBalance() } }
 
@@ -75,7 +110,7 @@ class TransactionsViewModel @Inject constructor(
     fun setDateFilter(f: DateFilter)  { _filters.update { it.copy(date = f) } }
     fun setCustomFrom(v: String)      { _filters.update { it.copy(customFrom = v) } }
     fun setCustomTo(v: String)        { _filters.update { it.copy(customTo = v) } }
-    fun setSearch(q: String)          { _filters.update { it.copy(search = q) } }
+    fun setSearch(q: String)          { _searchQuery.value = q }
 
     fun deleteTransaction(txn: Transaction) {
         viewModelScope.launch {
@@ -155,13 +190,16 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    fun filtered(state: TxnUiState): List<Transaction> {
-        val f          = state.filters
+    private fun applyFilters(
+        txns:     List<Transaction>,
+        accounts: List<Account>,
+        f:        TxnFilters,
+    ): List<Transaction> {
         val today      = DateUtils.todayStr()
         val monthStart = today.substring(0, 7) + "-01"
         val weekStart  = java.time.LocalDate.now().minusDays(6).toString()
 
-        var list = state.allTxns.sortedByDescending { it.date + it.time }
+        var list = txns.sortedByDescending { it.date + it.time }
         list = when (f.type) {
             TypeFilter.INCOME   -> list.filter { it.type == TransactionType.income }
             TypeFilter.EXPENSE  -> list.filter { it.type == TransactionType.expense }
@@ -176,10 +214,12 @@ class TransactionsViewModel @Inject constructor(
             DateFilter.ALL    -> list
         }
         if (f.search.isNotBlank()) {
-            val q = f.search.lowercase()
+            val q          = f.search.lowercase()
+            val accNameMap = accounts.associateBy({ it.id }, { it.name.lowercase() })
             list = list.filter { txn ->
-                val accName = state.accounts.find { it.id == txn.accountId }?.name ?: ""
-                txn.note.lowercase().contains(q) || txn.category.lowercase().contains(q) || accName.lowercase().contains(q)
+                txn.note.lowercase().contains(q) ||
+                txn.category.lowercase().contains(q) ||
+                (accNameMap[txn.accountId]?.contains(q) == true)
             }
         }
         return list

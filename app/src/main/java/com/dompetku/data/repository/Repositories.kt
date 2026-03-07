@@ -28,6 +28,10 @@ class TransactionRepository @Inject constructor(
     /** Alias used by ViewModels */
     fun observeAll(): Flow<List<Transaction>> = allTransactions
 
+    /** Observe the N most recent transactions — lightweight alternative to allTransactions */
+    fun observeRecent(limit: Int): Flow<List<Transaction>> =
+        dao.observeRecent(limit).map { it.map { e -> e.hydrate(gson) } }
+
     fun transactionsByAccount(accountId: String): Flow<List<Transaction>> =
         dao.observeByAccount(accountId).map { it.map { e -> e.hydrate(gson) } }
 

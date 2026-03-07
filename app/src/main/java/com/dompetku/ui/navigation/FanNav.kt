@@ -71,46 +71,48 @@ fun FanNav(
 ) {
     var open by remember { mutableStateOf(false) }
 
-    // ── Pulse animation for FAB (only when closed) ────────────────────────────
+    // ── Pulse animation for FAB — only runs when fan is CLOSED ─────────────────
+    // Using key(open) so the animation resets cleanly when fan opens/closes
     val infiniteTransition = rememberInfiniteTransition(label = "fabPulse")
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue   = 0.55f,
+        initialValue   = if (open) 0f else 0.50f,
         targetValue    = 0f,
         animationSpec  = infiniteRepeatable(
-            animation  = tween(2500, easing = LinearEasing),
+            animation  = tween(2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "pulseAlpha",
     )
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue  = 1f,
-        targetValue   = 1.6f,
+        initialValue  = if (open) 1f else 1f,
+        targetValue   = if (open) 1f else 1.65f,
         animationSpec = infiniteRepeatable(
-            animation  = tween(2500, easing = LinearEasing),
+            animation  = tween(2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "pulseScale",
     )
 
     // ── FAB icon cross-fade ───────────────────────────────────────────────────
+    // iOS-like spring: high stiffness, low damping = snappy with slight overshoot
     val fabIconAlpha by animateFloatAsState(
         targetValue   = if (open) 0f else 1f,
-        animationSpec = tween(220),
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
         label         = "fabLogoAlpha",
     )
     val fabLogoScale by animateFloatAsState(
-        targetValue   = if (open) 0.5f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        targetValue   = if (open) 0.4f else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label         = "fabLogoScale",
     )
     val fabXAlpha by animateFloatAsState(
         targetValue   = if (open) 1f else 0f,
-        animationSpec = tween(220),
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
         label         = "fabXAlpha",
     )
     val fabXScale by animateFloatAsState(
-        targetValue   = if (open) 1f else 0.5f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        targetValue   = if (open) 1f else 0.4f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
         label         = "fabXScale",
     )
 
@@ -305,12 +307,12 @@ private fun BoxScope.FanItemButton(
 ) {
     val density = LocalDensity.current
 
-    // Open animation: spring cubic-bezier(0.34,1.56,0.64,1)
-    // Close animation: ease cubic-bezier(0.4,0,0.6,1) reverse stagger
+    // Open: iOS spring (snappy, slight overshoot like UIKit spring)
+    // Close: fast ease-out with stagger
     val animSpec: FiniteAnimationSpec<Float> = if (open)
-        spring(dampingRatio = 0.6f, stiffness = 300f)
+        spring(dampingRatio = 0.58f, stiffness = 380f)
     else
-        tween(durationMillis = 250, easing = FastOutSlowInEasing, delayMillis = closeDelay)
+        tween(durationMillis = 200, easing = FastOutSlowInEasing, delayMillis = closeDelay)
 
     val targetOffsetX = if (open) item.dxDp else 0f
     val targetOffsetY = if (open) item.dyDp else 0f
