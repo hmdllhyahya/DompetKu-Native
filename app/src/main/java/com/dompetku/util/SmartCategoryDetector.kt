@@ -9,6 +9,8 @@ object SmartCategoryDetector {
     data class DetectionResult(
         val category:   String,
         val confidence: Float,
+        val isEasterEgg: Boolean = false,
+        val easterEggLabel: String = "",
     )
 
     private val RULES: List<Pair<String, List<String>>> = listOf(
@@ -54,6 +56,11 @@ object SmartCategoryDetector {
             "spbu", "bahan bakar", "fuel", "isi bensin", "servis motor", "servis mobil",
             "bengkel", "tambal ban", "cuci mobil", "cuci motor", "driver", "ride",
             "perjalanan", "ongkos", "tiket", "tiket kereta", "tiket pesawat",
+            // pesawat & maskapai
+            "pesawat", "flight", "boarding", "bandara", "airport", "terminal",
+            "garuda", "lion air", "lionair", "batik air", "batikair", "citilink",
+            "airasia", "sriwijaya", "wings air", "nam air", "pelita", "trigana",
+            "maskapai", "airline", "check-in", "check in", "bagasi", "luggage",
         ),
 
         "Hiburan" to listOf(
@@ -145,9 +152,23 @@ object SmartCategoryDetector {
         ),
     )
 
+    // Easter egg keywords → Kereta Cepat Indonesia-China
+    private val EASTER_EGG_WHOOSH = listOf("kcij", "whoosh", "kereta cepat", "halim", "padalarang", "tegalluar", "karawang kcij")
+
     fun detect(note: String): DetectionResult? {
         if (note.isBlank()) return null
         val lower = note.lowercase().trim()
+
+        // Easter egg: KCIJ / Whoosh
+        if (EASTER_EGG_WHOOSH.any { lower.contains(it) }) {
+            return DetectionResult(
+                category     = "Transportasi",
+                confidence   = 1f,
+                isEasterEgg  = true,
+                easterEggLabel = "Wuuush! 🚄 Kereta Cepat terdeteksi!",
+            )
+        }
+
         var bestCategory: String? = null
         var bestScore = 0
         for ((category, keywords) in RULES) {
@@ -160,4 +181,33 @@ object SmartCategoryDetector {
     }
 
     fun allCategories(): List<String> = RULES.map { it.first }
+
+    // ── Contextual field definitions per category ────────────────────────────
+    // Each entry: fieldKey -> hint label shown to user
+    data class ContextField(val key: String, val label: String, val hint: String)
+
+    val CONTEXTUAL_FIELDS: Map<String, List<ContextField>> = mapOf(
+        "Transportasi" to listOf(
+            ContextField("dari",     "Dari",         "cth: Blok M, Halim..."),
+            ContextField("ke",       "Ke",           "cth: Monas, Bandung..."),
+        ),
+        "Hiburan" to listOf(
+            ContextField("judul",    "Judul / Event", "cth: Avengers, Coldplay..."),
+        ),
+        "Tagihan" to listOf(
+            ContextField("provider", "Provider",      "cth: Telkomsel, PLN..."),
+        ),
+        "Kesehatan" to listOf(
+            ContextField("dokter",   "Dokter / Klinik", "cth: dr. Budi, RS Medistra..."),
+        ),
+        "Pendidikan" to listOf(
+            ContextField("institusi", "Institusi / Kursus", "cth: Udemy, Binus..."),
+        ),
+        "Belanja Online" to listOf(
+            ContextField("platform", "Platform", "cth: Shopee, Tokopedia..."),
+        ),
+    )
+
+    fun contextFieldsFor(category: String): List<ContextField> =
+        CONTEXTUAL_FIELDS[category] ?: emptyList()
 }

@@ -128,6 +128,9 @@ class AttachmentRepository @Inject constructor(
     suspend fun getByTransaction(txnId: String): List<Attachment> =
         dao.getByTransaction(txnId).map(AttachmentEntity::toDomain)
 
+    fun flowByTransaction(txnId: String): kotlinx.coroutines.flow.Flow<List<Attachment>> =
+        dao.observeByTransaction(txnId).map { it.map(AttachmentEntity::toDomain) }
+
     suspend fun insert(attachment: Attachment)   { dao.insert(attachment.toEntity()) }
     suspend fun delete(attachment: Attachment)   { dao.delete(attachment.toEntity()) }
     suspend fun deleteByTransaction(txnId: String) { dao.deleteByTransaction(txnId) }

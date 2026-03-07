@@ -177,6 +177,47 @@ app/src/main/java/com/dompetku/
 
 ---
 
+## 8. ROADMAP PHASE 5E & 5F
+
+### Phase 5E (next)
+- [x] Attachment di TransferSheet — DONE: picker + thumbnail + remove + persistable URI
+- [ ] Analytics donut chart proper — ganti bar visualization existing
+- [x] Sound effects — DONE: SoundManager (ToneGenerator), playSuccess/playDelete/playTransfer, wire ke MainScaffold via soundEnabled
+- [x] Drag-to-reorder account cards — DONE: tombol ←/→ muncul di editMode, swap index + reorderAccounts()
+
+### Phase 5F
+- [ ] Export/Import CSV+Excel — Apache POI + opencsv sudah di deps
+- [ ] Notifikasi reminder — WorkManager sudah di deps
+- [ ] AccountFormSheet color wheel — custom gradient picker
+- [ ] Performance polish — skeleton, haptic, pull-to-refresh
+- [ ] Analytics lanjutan — monthly trend 6/12 bulan, savings rate
+
+### Dropped
+- ~~Dark mode~~ — tidak diprioritaskan
+- ~~Expand animation~~ — defer sampai BOM upgrade dievaluasi
+
+---
+
+## 7. PROGRESS TRACKER PHASE 5D
+
+- [x] Contextual fields — input di TransactionFormSheet + display di TransactionDetailSheet (Transportasi: dari/ke, Hiburan: judul, Tagihan: provider, dst)
+- [x] Smart job detection — DONE: 12 kategori job (engineer, dokter, guru, designer, creator, dll) dengan rekomendasi karir spesifik per job
+- [ ] Expand animation — Compose BOM perlu upgrade ke 2024.09+ dulu
+
+---
+
+## 6. PROGRESS TRACKER (update setiap selesai 1 item)
+
+- [x] Fix transfer edit bug — VERIFIED correct behavior (admin fee only deducts from sender)
+- [x] Hide balance di AccountDetailScreen — `hidden` param sudah ada dan di-wire dari NavGraph
+- [x] Account card berwarna di TransactionFormSheet — LazyRow colored cards sudah ada
+- [x] Lampiran foto/file — AttachmentRepository, TransactionFormSheet, TransactionDetailSheet sudah lengkap
+- [x] Analytics chart — PieDonut + bar chart + lifestyle + salary insight sudah ada
+- [x] Smart category detection — DONE: easter egg KCIJ/Whoosh + maskapai keywords + EasterEggBadge animasi pulse di form
+- [ ] Expand animation akun → fullscreen — DEFERRED ke 5D: Compose BOM 2024.05.00 = v1.6.x, SharedTransitionLayout butuh v1.7+. Perlu upgrade BOM dulu.
+
+---
+
 ## 5. PRIORITAS PENGERJAAN PHASE 5C
 
 **Urutan yang disarankan:**

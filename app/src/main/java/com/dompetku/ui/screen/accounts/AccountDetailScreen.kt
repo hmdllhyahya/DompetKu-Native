@@ -40,6 +40,7 @@ fun AccountDetailScreen(
     accIndex:     Int,
     transactions: List<Transaction>,
     accounts:     List<Account> = emptyList(),
+    hidden:       Boolean       = false,
     onBack:       () -> Unit,
     onEdit:       (Account) -> Unit,
     onTxnClick:   (Transaction) -> Unit = {},
@@ -139,8 +140,8 @@ fun AccountDetailScreen(
                     modifier              = Modifier.padding(vertical = 14.dp),
                 ) {
                     Text(
-                        "${if (account.balance < 0) "-" else ""}${CurrencyFormatter.format(Math.abs(account.balance))}",
-                        color    = if (account.balance < 0) Color(0xFFFCA5A5) else Color.White,
+                        if (hidden) "••••••" else "${if (account.balance < 0) "-" else ""}${CurrencyFormatter.format(Math.abs(account.balance))}",
+                        color    = if (account.balance < 0 && !hidden) Color(0xFFFCA5A5) else Color.White,
                         fontSize = 28.sp, fontWeight = FontWeight.ExtraBold,
                     )
                     if (account.balance < 0) {
@@ -179,7 +180,7 @@ fun AccountDetailScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                 Text(label, color = Color.White.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(3.dp))
-                                Text(CurrencyFormatter.compact(value), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
+                                Text(if (hidden) "••••" else CurrencyFormatter.compact(value), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
                     }

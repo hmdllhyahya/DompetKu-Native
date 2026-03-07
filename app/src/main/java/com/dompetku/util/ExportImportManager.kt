@@ -1,0 +1,721 @@
+package com.dompetku.util
+
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import androidx.core.content.FileProvider
+import com.dompetku.domain.model.Account
+import com.dompetku.domain.model.AccountType
+import com.dompetku.domain.model.Transaction
+import com.dompetku.domain.model.TransactionType
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.apache.poi.ss.usermodel.CellType
+import org.apache.poi.ss.usermodel.DateUtil
+import org.apache.poi.ss.usermodel.Row
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import java.io.File
+import java.io.FileOutputStream
+import java.time.LocalDate
+import javax.inject.Inject
+import javax.inject.Singleton
+
+// ── Result types ──────────────────────────────────────────────────────────────
+
+data class ImportResult(
+    val transactions: List<Transaction>,
+    val accounts:     List<Account>,
+    val errors:       List<String>,
+)
+
+// ── Smart Import Data Classes ─────────────────────────────────────────────────
+
+data class SmartImportResult(
+    val transactions:     List<SmartTransaction>,
+    val detectedAccounts: List<DetectedAccount>,
+    val categoryMappings: Map<String, String>,   // rawCategory -> dompetKu category
+    val autoSignCount:    Int,                   // txns where type inferred from sign
+    val extraFieldCount:  Int,                   // txns with unknown cols merged to note
+    val errors:           List<String>,
+    val fileInfo:         String,
+)
+
+data class SmartTransaction(
+    val tempId:           String,
+    val suggestedType:    TransactionType,
+    val amount:           Long,
+    val category:         String,
+    val originalCategory: String,
+    val note:             String,
+    val date:             String,
+    val time:             String,
+    val rawAccountName:   String,
+    val wasSignFlipped:   Boolean,
+)
+
+data class DetectedAccount(
+    val rawName:          String,
+    val transactionCount: Int,
+    val suggestedMatch:   Account?,
+    val matchScore:       Float,
+)
+
+sealed class AccountResolution {
+    data class UseExisting(val account: Account) : AccountResolution()
+    data class CreateNew(val name: String)       : AccountResolution()
+    object Skip                                  : AccountResolution()
+}
+
+// ── Manager ───────────────────────────────────────────────────────────────────
+
+@Singleton
+class ExportImportManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
+
+    // ── EXPORT ────────────────────────────────────────────────────────────────
+
+    suspend fun exportXlsx(
+        transactions: List<Transaction>,
+        accounts:     List<Account>,
+    ): Uri = withContext(Dispatchers.IO) {
+        val workbook = XSSFWorkbook()
+
+        // Sheet 1 — Transaksi
+        val txnSheet = workbook.createSheet("Transaksi")
+        val txnHeaders = listOf(
+            "id", "type", "amount", "adminFee", "category",
+            "note", "date", "time", "accountId", "fromId", "toId",
+        )
+        txnSheet.createRow(0).writeHeaders(txnHeaders)
+        transactions.forEachIndexed { i, t ->
+            txnSheet.createRow(i + 1).apply {
+                createCell(0).setCellValue(t.id)
+                createCell(1).setCellValue(t.type.name)
+                createCell(2).setCellValue(t.amount.toDouble())
+                createCell(3).setCellValue(t.adminFee.toDouble())
+                createCell(4).setCellValue(t.category)
+                createCell(5).setCellValue(t.note)
+                createCell(6).setCellValue(t.date)
+                createCell(7).setCellValue(t.time)
+                createCell(8).setCellValue(t.accountId)
+                createCell(9).setCellValue(t.fromId ?: "")
+                createCell(10).setCellValue(t.toId ?: "")
+            }
+        }
+
+        // Sheet 2 — Akun
+        val accSheet = workbook.createSheet("Akun")
+        val accHeaders = listOf(
+            "id", "type", "name", "balance", "last4",
+            "brandKey", "gradientStart", "gradientEnd", "sortOrder",
+        )
+        accSheet.createRow(0).writeHeaders(accHeaders)
+        accounts.forEachIndexed { i, a ->
+            accSheet.createRow(i + 1).apply {
+                createCell(0).setCellValue(a.id)
+                createCell(1).setCellValue(a.type.name)
+                createCell(2).setCellValue(a.name)
+                createCell(3).setCellValue(a.balance.toDouble())
+                createCell(4).setCellValue(a.last4 ?: "")
+                createCell(5).setCellValue(a.brandKey ?: "")
+                createCell(6).setCellValue(a.gradientStart.toDouble())
+                createCell(7).setCellValue(a.gradientEnd.toDouble())
+                createCell(8).setCellValue(a.sortOrder.toDouble())
+            }
+        }
+
+        // Write to file
+        val outFile = exportFile()
+        FileOutputStream(outFile).use { workbook.write(it) }
+        workbook.close()
+
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
+    }
+
+    // ── IMPORT ────────────────────────────────────────────────────────────────
+
+    suspend fun importXlsx(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
+        val transactions = mutableListOf<Transaction>()
+        val accounts     = mutableListOf<Account>()
+        val errors       = mutableListOf<String>()
+
+        val stream = context.contentResolver.openInputStream(uri)
+            ?: return@withContext ImportResult(emptyList(), emptyList(), listOf("Gagal membuka file"))
+
+        runCatching {
+            val workbook = XSSFWorkbook(stream)
+
+            // ── Parse Transaksi ───────────────────────────────────────────────
+            workbook.getSheet("Transaksi")?.let { sheet ->
+                val headerRow = sheet.getRow(0) ?: return@let
+                val hMap = headerRow.buildHeaderMap()
+
+                for (rowIdx in 1..sheet.lastRowNum) {
+                    val row = sheet.getRow(rowIdx) ?: continue
+                    if (row.isBlank()) continue
+                    runCatching {
+                        val id        = row.str(hMap["id"])        ?: error("kolom 'id' kosong")
+                        val typeStr   = row.str(hMap["type"])      ?: error("kolom 'type' kosong")
+                        val amount    = row.lng(hMap["amount"])    ?: error("kolom 'amount' kosong")
+                        val date      = row.str(hMap["date"])      ?: error("kolom 'date' kosong")
+                        val accountId = row.str(hMap["accountId"]) ?: error("kolom 'accountId' kosong")
+                        val type = runCatching { TransactionType.valueOf(typeStr) }
+                            .getOrElse { error("type tidak valid: $typeStr") }
+                        transactions.add(
+                            Transaction(
+                                id        = id,
+                                type      = type,
+                                amount    = amount,
+                                adminFee  = row.lng(hMap["adminFee"]) ?: 0L,
+                                category  = row.str(hMap["category"]) ?: "",
+                                note      = row.str(hMap["note"])     ?: "",
+                                date      = date,
+                                time      = row.str(hMap["time"])     ?: "00:00",
+                                accountId = accountId,
+                                fromId    = row.str(hMap["fromId"])?.takeIf { it.isNotBlank() },
+                                toId      = row.str(hMap["toId"])?.takeIf { it.isNotBlank() },
+                            )
+                        )
+                    }.onFailure { e ->
+                        errors.add("Transaksi baris ${rowIdx + 1}: ${e.message}")
+                    }
+                }
+            } ?: errors.add("Sheet 'Transaksi' tidak ditemukan")
+
+            // ── Parse Akun ────────────────────────────────────────────────────
+            workbook.getSheet("Akun")?.let { sheet ->
+                val headerRow = sheet.getRow(0) ?: return@let
+                val hMap = headerRow.buildHeaderMap()
+
+                for (rowIdx in 1..sheet.lastRowNum) {
+                    val row = sheet.getRow(rowIdx) ?: continue
+                    if (row.isBlank()) continue
+                    runCatching {
+                        val id      = row.str(hMap["id"])   ?: error("kolom 'id' kosong")
+                        val typeStr = row.str(hMap["type"]) ?: error("kolom 'type' kosong")
+                        val name    = row.str(hMap["name"]) ?: error("kolom 'name' kosong")
+                        val type = runCatching { AccountType.valueOf(typeStr) }
+                            .getOrElse { error("type tidak valid: $typeStr") }
+                        accounts.add(
+                            Account(
+                                id            = id,
+                                type          = type,
+                                name          = name,
+                                balance       = row.lng(hMap["balance"])       ?: 0L,
+                                last4         = row.str(hMap["last4"])?.takeIf { it.isNotBlank() },
+                                brandKey      = row.str(hMap["brandKey"])?.takeIf { it.isNotBlank() },
+                                gradientStart = row.lng(hMap["gradientStart"]) ?: 0L,
+                                gradientEnd   = row.lng(hMap["gradientEnd"])   ?: 0L,
+                                sortOrder     = row.lng(hMap["sortOrder"])?.toInt() ?: 0,
+                            )
+                        )
+                    }.onFailure { e ->
+                        errors.add("Akun baris ${rowIdx + 1}: ${e.message}")
+                    }
+                }
+            } ?: errors.add("Sheet 'Akun' tidak ditemukan")
+
+            workbook.close()
+        }.onFailure { e ->
+            errors.add("Error membaca file: ${e.message}")
+        }
+
+        stream.close()
+        ImportResult(transactions, accounts, errors)
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun exportFile(): File {
+        val dir = (context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+            ?: context.filesDir)
+            .let { File(it, "DompetKu") }
+            .also { it.mkdirs() }
+        val date = LocalDate.now().toString().replace("-", "")
+        return File(dir, "dompetku_export_$date.xlsx")
+    }
+
+    private fun Row.buildHeaderMap(): Map<String, Int> = buildMap {
+        (0 until lastCellNum).forEach { i ->
+            getCell(i)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() }?.let { put(it, i) }
+        }
+    }
+
+    private fun Row.isBlank(): Boolean =
+        (0 until lastCellNum).all { i ->
+            val cell = getCell(i) ?: return@all true
+            cell.cellType == CellType.BLANK ||
+                (cell.cellType == CellType.STRING && cell.stringCellValue.isBlank())
+        }
+
+    private fun Row.str(colIdx: Int?): String? {
+        colIdx ?: return null
+        val cell = getCell(colIdx) ?: return null
+        return when (cell.cellType) {
+            CellType.STRING  -> cell.stringCellValue.trim().takeIf { it.isNotBlank() }
+            CellType.NUMERIC -> cell.numericCellValue.toLong().toString()
+            CellType.BOOLEAN -> cell.booleanCellValue.toString()
+            else             -> null
+        }
+    }
+
+    private fun Row.lng(colIdx: Int?): Long? {
+        colIdx ?: return null
+        val cell = getCell(colIdx) ?: return null
+        return when (cell.cellType) {
+            CellType.NUMERIC -> cell.numericCellValue.toLong()
+            CellType.STRING  -> cell.stringCellValue.trim().toLongOrNull()
+            else             -> null
+        }
+    }
+
+    private fun Row.writeHeaders(headers: List<String>) {
+        headers.forEachIndexed { i, h -> createCell(i).setCellValue(h) }
+    }
+
+    // ── SMART IMPORT ──────────────────────────────────────────────────────────────
+
+    suspend fun smartImportXlsx(
+        uri:              Uri,
+        existingAccounts: List<Account>,
+    ): SmartImportResult = withContext(Dispatchers.IO) {
+        val transactions    = mutableListOf<SmartTransaction>()
+        val errors          = mutableListOf<String>()
+        val accountRawNames = mutableMapOf<String, Int>()
+        var autoSignCount   = 0
+        var extraFieldCount = 0
+        val sheetInfoParts  = mutableListOf<String>()
+
+        val stream = context.contentResolver.openInputStream(uri)
+            ?: return@withContext SmartImportResult(
+                emptyList(), emptyList(), emptyMap(), 0, 0,
+                listOf("Gagal membuka file"), "Error"
+            )
+
+        runCatching {
+            val workbook = XSSFWorkbook(stream)
+            for (sheetIdx in 0 until workbook.numberOfSheets) {
+                val sheet = workbook.getSheetAt(sheetIdx)
+
+                // Find first header-like row (scan up to row 5)
+                val headerRowIdx = (0..minOf(5, sheet.lastRowNum)).firstOrNull { idx ->
+                    val r = sheet.getRow(idx) ?: return@firstOrNull false
+                    (0 until r.lastCellNum).any { i ->
+                        r.getCell(i)?.cellType == CellType.STRING &&
+                            !r.getCell(i)?.stringCellValue.isNullOrBlank()
+                    }
+                } ?: continue
+
+                val headerRow = sheet.getRow(headerRowIdx) ?: continue
+                val colMap    = SmartImportEngine.detectColumns(headerRow)
+
+                val hasAmount = colMap.amount != null ||
+                    (colMap.debit != null && colMap.credit != null)
+                if (!hasAmount) {
+                    sheetInfoParts.add("'${sheet.sheetName}': dilewati (tidak ada kolom nominal)")
+                    continue
+                }
+
+                var rowCount = 0
+                for (rowIdx in (headerRowIdx + 1)..sheet.lastRowNum) {
+                    val row = sheet.getRow(rowIdx) ?: continue
+                    val allBlank = (0 until row.lastCellNum).all { i ->
+                        val c = row.getCell(i)
+                        c == null || c.cellType == CellType.BLANK ||
+                            (c.cellType == CellType.STRING && c.stringCellValue.isBlank())
+                    }
+                    if (allBlank) continue
+
+                    runCatching {
+                        val txn = SmartImportEngine.parseRow(row, colMap, rowIdx)
+                            ?: return@runCatching
+                        transactions.add(txn)
+                        accountRawNames[txn.rawAccountName] =
+                            (accountRawNames[txn.rawAccountName] ?: 0) + 1
+                        if (txn.wasSignFlipped) autoSignCount++
+                        if (txn.note.contains("[") && txn.note.contains(": ")) extraFieldCount++
+                        rowCount++
+                    }.onFailure { e -> errors.add("Baris ${rowIdx + 1}: ${e.message}") }
+                }
+                sheetInfoParts.add("'${sheet.sheetName}': $rowCount baris")
+            }
+            workbook.close()
+        }.onFailure { e -> errors.add("Gagal baca file: ${e.message}") }
+        stream.close()
+
+        val detectedAccounts = accountRawNames.map { (rawName, count) ->
+            val (match, score) = SmartImportEngine.matchAccount(rawName, existingAccounts)
+            DetectedAccount(rawName, count, match, score)
+        }
+        val categoryMappings = transactions
+            .map { it.originalCategory }.filter { it.isNotBlank() }.distinct()
+            .associateWith { SmartImportEngine.mapCategory(it) }
+
+        SmartImportResult(
+            transactions     = transactions,
+            detectedAccounts = detectedAccounts,
+            categoryMappings = categoryMappings,
+            autoSignCount    = autoSignCount,
+            extraFieldCount  = extraFieldCount,
+            errors           = errors,
+            fileInfo         = sheetInfoParts.joinToString(" | ")
+                .ifBlank { "${transactions.size} transaksi ditemukan" },
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Smart Import Engine — stateless pure logic
+// ─────────────────────────────────────────────────────────────────────────────
+
+internal object SmartImportEngine {
+
+    // ── Column map ────────────────────────────────────────────────────────────
+
+    data class ColumnMap(
+        val date:     Int? = null,
+        val time:     Int? = null,
+        val amount:   Int? = null,
+        val debit:    Int? = null,
+        val credit:   Int? = null,
+        val category: Int? = null,
+        val note:     Int? = null,
+        val account:  Int? = null,
+        val txnType:  Int? = null,
+        val extras:   Map<Int, String> = emptyMap(),
+    )
+
+    private enum class Role { DATE, TIME, AMOUNT, DEBIT, CREDIT, CATEGORY, NOTE, ACCOUNT, TYPE }
+
+    private val ROLE_KEYWORDS: Map<Role, Set<String>> = mapOf(
+        Role.DATE     to setOf("date","tanggal","tgl","waktu","datetime","created","timestamp","created_at"),
+        Role.TIME     to setOf("time","jam","hour","pukul"),
+        Role.AMOUNT   to setOf("amount","nominal","jumlah","total","nilai","uang","harga","money","sum"),
+        Role.DEBIT    to setOf("debit","expense","pengeluaran","keluar","out","minus","withdraw","spent","debet"),
+        Role.CREDIT   to setOf("credit","income","pemasukan","masuk","in","plus","deposit","received","kredit"),
+        Role.CATEGORY to setOf("category","kategori","kat","jenis","grup","group","sub","subcategory","tipe","class"),
+        Role.NOTE     to setOf("note","catatan","keterangan","memo","description","deskripsi","remark","ket","detail","narasi"),
+        Role.ACCOUNT  to setOf("account","akun","wallet","dompet","source","from","sumber","rekening","account_name"),
+        Role.TYPE     to setOf("type","tipe","direction","flow","in_out","income_expense","jenis_transaksi"),
+    )
+
+    fun detectColumns(headerRow: Row): ColumnMap {
+        val n       = headerRow.lastCellNum.toInt().coerceAtLeast(0)
+        val headers = (0 until n).map { i ->
+            headerRow.getCell(i)?.stringCellValue?.trim()?.lowercase() ?: ""
+        }
+
+        fun scoreFor(h: String, role: Role): Float {
+            if (h.isBlank()) return 0f
+            val kws = ROLE_KEYWORDS[role] ?: return 0f
+            if (h in kws) return 1.0f
+            if (kws.any { h.contains(it) || it.contains(h) }) return 0.7f
+            if (h.split(Regex("[_\\s\\-/]+")).any { it in kws }) return 0.6f
+            return 0f
+        }
+
+        val assigned = mutableMapOf<Role, Int>()
+        val claimed  = mutableSetOf<Int>()
+        val priority = listOf(Role.DATE, Role.DEBIT, Role.CREDIT, Role.AMOUNT,
+                              Role.CATEGORY, Role.NOTE, Role.ACCOUNT, Role.TYPE, Role.TIME)
+        for (role in priority) {
+            val best = (0 until n).filter { it !in claimed }
+                .maxByOrNull { scoreFor(headers[it], role) }
+            if (best != null && scoreFor(headers[best], role) > 0.3f) {
+                assigned[role] = best
+                claimed.add(best)
+            }
+        }
+
+        val hasDebitCredit = assigned.containsKey(Role.DEBIT) && assigned.containsKey(Role.CREDIT)
+        val extras = (0 until n).filter { it !in claimed }
+            .associateWith { i ->
+                headerRow.getCell(i)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() }
+                    ?: "Kolom${i + 1}"
+            }
+
+        return ColumnMap(
+            date     = assigned[Role.DATE],
+            time     = assigned[Role.TIME],
+            amount   = if (hasDebitCredit) null else assigned[Role.AMOUNT],
+            debit    = if (hasDebitCredit) assigned[Role.DEBIT] else null,
+            credit   = if (hasDebitCredit) assigned[Role.CREDIT] else null,
+            category = assigned[Role.CATEGORY],
+            note     = assigned[Role.NOTE],
+            account  = assigned[Role.ACCOUNT],
+            txnType  = assigned[Role.TYPE],
+            extras   = extras,
+        )
+    }
+
+    // ── Row parsing ───────────────────────────────────────────────────────────
+
+    fun parseRow(row: Row, colMap: ColumnMap, rowIdx: Int): SmartTransaction? {
+        val amount: Long
+        val type:   TransactionType
+        var wasSignFlipped = false
+
+        if (colMap.debit != null && colMap.credit != null) {
+            val dv = row.dbl(colMap.debit)  ?: 0.0
+            val cv = row.dbl(colMap.credit) ?: 0.0
+            when {
+                dv > 0 -> { amount = dv.toLong(); type = TransactionType.expense }
+                cv > 0 -> { amount = cv.toLong(); type = TransactionType.income  }
+                else   -> return null
+            }
+        } else {
+            val rawAmt = row.dbl(colMap.amount ?: return null) ?: return null
+            if (rawAmt == 0.0) return null
+            if (rawAmt < 0) {
+                amount = (-rawAmt).toLong()
+                type   = TransactionType.expense
+                wasSignFlipped = true
+            } else {
+                amount = rawAmt.toLong()
+                val ts = colMap.txnType?.let { row.str(it) }?.lowercase()?.trim()
+                type = when (ts) {
+                    "expense","pengeluaran","keluar","out","debit","-","e","dr" -> TransactionType.expense
+                    "income","pemasukan","masuk","in","credit","+","i","cr"   -> TransactionType.income
+                    "transfer"                                                  -> TransactionType.transfer
+                    else                                                        -> TransactionType.expense
+                }
+            }
+        }
+
+        val rawDateStr  = colMap.date?.let { row.str(it) } ?: return null
+        val parsedDate  = parseDate(rawDateStr) ?: return null
+        val parsedTime  = colMap.time?.let { row.str(it) }?.let { parseTime(it) } ?: "00:00"
+        val rawCategory = colMap.category?.let { row.str(it) } ?: ""
+        val rawNote     = colMap.note?.let { row.str(it) } ?: ""
+        val rawAccount  = colMap.account?.let { row.str(it) }?.ifBlank { null } ?: "Akun Impor"
+
+        val extraParts = colMap.extras.mapNotNull { (ci, hdr) ->
+            row.str(ci)?.takeIf { it.isNotBlank() }?.let { v -> "[$hdr: $v]" }
+        }
+        val fullNote = listOfNotNull(
+            rawNote.takeIf { it.isNotBlank() },
+            if (extraParts.isNotEmpty()) extraParts.joinToString(" ") else null,
+        ).joinToString(" ")
+
+        return SmartTransaction(
+            tempId           = "imp_${rowIdx}_${System.currentTimeMillis()}",
+            suggestedType    = type,
+            amount           = amount,
+            category         = mapCategory(rawCategory),
+            originalCategory = rawCategory,
+            note             = fullNote,
+            date             = parsedDate,
+            time             = parsedTime,
+            rawAccountName   = rawAccount.trim(),
+            wasSignFlipped   = wasSignFlipped,
+        )
+    }
+
+    // ── Date parsing ──────────────────────────────────────────────────────────
+
+    fun parseDate(raw: String): String? {
+        val s = raw.trim()
+        // ISO: 2025-03-07 or with time suffix
+        if (s.matches(Regex("\\d{4}-\\d{2}-\\d{2}.*"))) return s.substring(0, 10)
+        // Compact: 20250307
+        if (s.matches(Regex("\\d{8}"))) return "${s.substring(0,4)}-${s.substring(4,6)}-${s.substring(6,8)}"
+        // Separator-based: DD/MM/YYYY, MM/DD/YYYY, YYYY/MM/DD, etc.
+        val parts = s.split(Regex("[/\\.\\-]")).map { it.trim() }.filter { it.isNotBlank() }
+        if (parts.size >= 3) {
+            val a = parts[0].toIntOrNull() ?: return null
+            val b = parts[1].toIntOrNull() ?: return null
+            val c = parts[2].take(4).toIntOrNull() ?: return null
+            return when {
+                c > 1900 -> String.format("%04d-%02d-%02d", c, b, a)          // DD/MM/YYYY
+                a > 1900 -> String.format("%04d-%02d-%02d", a, b, c)          // YYYY/MM/DD
+                a > 31   -> String.format("%04d-%02d-%02d", a + 2000, b, c)   // YY first
+                b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)   // day in middle
+                else     -> String.format("%04d-%02d-%02d", c + 2000, b, a)   // assume DD/MM/YY
+            }
+        }
+        // Month name: "7 Mar 2025" or "Mar 7, 2025"
+        val months = mapOf(
+            "jan" to 1, "feb" to 2, "mar" to 3, "apr" to 4,
+            "may" to 5, "mei" to 5, "jun" to 6, "jul" to 7,
+            "aug" to 8, "agu" to 8, "sep" to 9, "oct" to 10,
+            "okt" to 10, "nov" to 11, "dec" to 12, "des" to 12,
+        )
+        val lc = s.lowercase()
+        for ((name, num) in months) {
+            if (lc.contains(name)) {
+                val nums = Regex("\\d+").findAll(s).map { it.value.toInt() }.toList()
+                val year = nums.firstOrNull { it > 1000 } ?: continue
+                val day  = nums.firstOrNull { it in 1..31 && it != year } ?: continue
+                return String.format("%04d-%02d-%02d", year, num, day)
+            }
+        }
+        return null
+    }
+
+    private fun parseTime(raw: String): String {
+        Regex("(\\d{1,2}):(\\d{2})").find(raw)?.let {
+            return String.format("%02d:%02d",
+                it.groupValues[1].toIntOrNull() ?: 0,
+                it.groupValues[2].toIntOrNull() ?: 0)
+        }
+        Regex("(\\d{1,2})\\.(\\d{2})").find(raw)?.let {
+            val h = it.groupValues[1].toIntOrNull() ?: return "00:00"
+            val m = it.groupValues[2].toIntOrNull() ?: return "00:00"
+            if (m < 60) return String.format("%02d:%02d", h, m)
+        }
+        return "00:00"
+    }
+
+    // ── Category mapping ──────────────────────────────────────────────────────
+
+    private val CATEGORY_MAP = mapOf(
+        // Makan & Minum
+        "food" to "Makan & Minum","meal" to "Makan & Minum","makan" to "Makan & Minum",
+        "minum" to "Makan & Minum","restaurant" to "Makan & Minum","resto" to "Makan & Minum",
+        "cafe" to "Makan & Minum","kafe" to "Makan & Minum","snack" to "Makan & Minum",
+        "makanan" to "Makan & Minum","minuman" to "Makan & Minum","drink" to "Makan & Minum",
+        "coffee" to "Makan & Minum","kopi" to "Makan & Minum","warung" to "Makan & Minum",
+        "kuliner" to "Makan & Minum","dining" to "Makan & Minum","beverages" to "Makan & Minum",
+        "groceries" to "Makan & Minum","breakfast" to "Makan & Minum","lunch" to "Makan & Minum",
+        "dinner" to "Makan & Minum","sarapan" to "Makan & Minum","makan siang" to "Makan & Minum",
+        "makan malam" to "Makan & Minum",
+        // Belanja Harian
+        "shopping" to "Belanja Harian","belanja" to "Belanja Harian",
+        "grocery" to "Belanja Harian","supermarket" to "Belanja Harian",
+        "daily" to "Belanja Harian","harian" to "Belanja Harian",
+        "pasar" to "Belanja Harian","market" to "Belanja Harian",
+        "minimarket" to "Belanja Harian","indomaret" to "Belanja Harian",
+        "alfamart" to "Belanja Harian","kebutuhan" to "Belanja Harian",
+        // Belanja Online
+        "online" to "Belanja Online","ecommerce" to "Belanja Online",
+        "marketplace" to "Belanja Online","tokopedia" to "Belanja Online",
+        "shopee" to "Belanja Online","lazada" to "Belanja Online",
+        // Transportasi
+        "transport" to "Transportasi","transportasi" to "Transportasi",
+        "commute" to "Transportasi","taxi" to "Transportasi",
+        "ojek" to "Transportasi","grab" to "Transportasi","gojek" to "Transportasi",
+        "bensin" to "Transportasi","fuel" to "Transportasi","parkir" to "Transportasi",
+        "parking" to "Transportasi","bus" to "Transportasi","train" to "Transportasi",
+        "krl" to "Transportasi","mrt" to "Transportasi","lrt" to "Transportasi",
+        "toll" to "Transportasi","tol" to "Transportasi",
+        "flight" to "Transportasi","pesawat" to "Transportasi",
+        "vehicle" to "Transportasi","kendaraan" to "Transportasi",
+        "commuting" to "Transportasi","travel" to "Transportasi",
+        // Hiburan
+        "entertainment" to "Hiburan","hiburan" to "Hiburan",
+        "movie" to "Hiburan","film" to "Hiburan","cinema" to "Hiburan","bioskop" to "Hiburan",
+        "game" to "Hiburan","gaming" to "Hiburan","concert" to "Hiburan","konser" to "Hiburan",
+        "music" to "Hiburan","musik" to "Hiburan","hobby" to "Hiburan","hobi" to "Hiburan",
+        "recreation" to "Hiburan","rekreasi" to "Hiburan","leisure" to "Hiburan",
+        // Tagihan
+        "bill" to "Tagihan","tagihan" to "Tagihan","utility" to "Tagihan",
+        "utilities" to "Tagihan","electricity" to "Tagihan","listrik" to "Tagihan",
+        "water" to "Tagihan","internet" to "Tagihan","phone" to "Tagihan",
+        "telepon" to "Tagihan","subscription" to "Tagihan","langganan" to "Tagihan",
+        "netflix" to "Tagihan","spotify" to "Tagihan","pulsa" to "Tagihan",
+        // Kesehatan
+        "health" to "Kesehatan","kesehatan" to "Kesehatan","medical" to "Kesehatan",
+        "medis" to "Kesehatan","doctor" to "Kesehatan","dokter" to "Kesehatan",
+        "medicine" to "Kesehatan","obat" to "Kesehatan","pharmacy" to "Kesehatan",
+        "apotek" to "Kesehatan","hospital" to "Kesehatan","gym" to "Kesehatan",
+        "olahraga" to "Kesehatan","sport" to "Kesehatan","fitness" to "Kesehatan",
+        // Pendidikan
+        "education" to "Pendidikan","pendidikan" to "Pendidikan",
+        "school" to "Pendidikan","sekolah" to "Pendidikan","course" to "Pendidikan",
+        "kursus" to "Pendidikan","buku" to "Pendidikan","book" to "Pendidikan",
+        "kuliah" to "Pendidikan","training" to "Pendidikan","pelatihan" to "Pendidikan",
+        // Tempat Tinggal
+        "housing" to "Tempat Tinggal","rent" to "Tempat Tinggal","sewa" to "Tempat Tinggal",
+        "kost" to "Tempat Tinggal","rumah" to "Tempat Tinggal","home" to "Tempat Tinggal",
+        "house" to "Tempat Tinggal","apartment" to "Tempat Tinggal",
+        "maintenance" to "Tempat Tinggal","renovasi" to "Tempat Tinggal",
+        // Perawatan
+        "beauty" to "Perawatan","perawatan" to "Perawatan","salon" to "Perawatan",
+        "haircut" to "Perawatan","skincare" to "Perawatan","grooming" to "Perawatan",
+        // Income categories
+        "salary" to "Gaji","gaji" to "Gaji","wage" to "Gaji","paycheck" to "Gaji",
+        "payroll" to "Gaji","upah" to "Gaji","honorarium" to "Gaji",
+        "freelance" to "Freelance","project" to "Freelance","jasa" to "Freelance",
+        "gift" to "Hadiah","hadiah" to "Hadiah","bonus" to "Hadiah","reward" to "Hadiah",
+        "invest" to "Investasi","investasi" to "Investasi","dividend" to "Investasi",
+        "dividen" to "Investasi","profit" to "Investasi","saham" to "Investasi",
+        "stock" to "Investasi","reksadana" to "Investasi",
+    )
+
+    fun mapCategory(raw: String): String {
+        if (raw.isBlank()) return "Lainnya"
+        val lc = raw.lowercase().trim()
+        CATEGORY_MAP[lc]?.let { return it }
+        lc.split(Regex("[\\s/&_,]+")).forEach { token ->
+            CATEGORY_MAP[token]?.let { return it }
+        }
+        CATEGORY_MAP.entries.firstOrNull { (k, _) ->
+            lc.contains(k) || k.contains(lc)
+        }?.let { return it.value }
+        return "Lainnya"
+    }
+
+    // ── Account fuzzy matching ────────────────────────────────────────────────
+
+    fun matchAccount(rawName: String, existing: List<Account>): Pair<Account?, Float> {
+        if (existing.isEmpty()) return null to 0f
+        val rawTokens = tokenize(rawName)
+        var best: Account? = null
+        var bestScore = 0f
+        for (acc in existing) {
+            val score = jaccardWithBoost(rawTokens, tokenize(acc.name))
+            if (score > bestScore) { bestScore = score; best = acc }
+        }
+        return if (bestScore >= 0.25f) best to bestScore else null to 0f
+    }
+
+    private fun tokenize(s: String): Set<String> =
+        s.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+            .split(Regex("\\s+")).filter { it.length > 1 }.toSet()
+
+    private fun jaccardWithBoost(a: Set<String>, b: Set<String>): Float {
+        if (a.isEmpty() || b.isEmpty()) return 0f
+        val inter = (a intersect b).size.toFloat()
+        val union = (a union b).size.toFloat()
+        val boost = if (a.containsAll(b) || b.containsAll(a)) 0.25f else 0f
+        return minOf(1f, inter / union + boost)
+    }
+
+    // ── Cell helper extensions ────────────────────────────────────────────────
+
+    fun Row.str(colIdx: Int): String? {
+        val cell = getCell(colIdx) ?: return null
+        return when (cell.cellType) {
+            CellType.STRING  -> cell.stringCellValue?.trim()?.takeIf { it.isNotBlank() }
+            CellType.NUMERIC -> {
+                if (DateUtil.isCellDateFormatted(cell)) {
+                    val d = cell.localDateTimeCellValue
+                    String.format("%04d-%02d-%02d", d.year, d.monthValue, d.dayOfMonth)
+                } else {
+                    val v = cell.numericCellValue
+                    if (v == Math.floor(v)) v.toLong().toString() else v.toString()
+                }
+            }
+            CellType.BOOLEAN -> cell.booleanCellValue.toString()
+            CellType.FORMULA -> runCatching { cell.stringCellValue?.trim()?.takeIf { it.isNotBlank() } }
+                .getOrNull() ?: runCatching { cell.numericCellValue.toLong().toString() }.getOrNull()
+            else -> null
+        }
+    }
+
+    fun Row.dbl(colIdx: Int): Double? {
+        val cell = getCell(colIdx) ?: return null
+        return when (cell.cellType) {
+            CellType.NUMERIC -> cell.numericCellValue
+            CellType.STRING  -> {
+                val cleaned = cell.stringCellValue
+                    .replace(Regex("[^\\d.\\-]"), "")
+                cleaned.toDoubleOrNull()
+            }
+            CellType.FORMULA -> runCatching { cell.numericCellValue }.getOrNull()
+            else -> null
+        }
+    }
+}

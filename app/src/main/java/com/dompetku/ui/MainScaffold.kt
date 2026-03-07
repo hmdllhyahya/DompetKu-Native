@@ -7,6 +7,7 @@ import com.dompetku.domain.model.Account
 import com.dompetku.domain.model.Transaction
 import com.dompetku.ui.navigation.FanNav
 import com.dompetku.ui.navigation.NavTab
+import com.dompetku.util.SoundManager
 import com.dompetku.ui.screen.transactions.TransactionDetailSheet
 import com.dompetku.ui.screen.transactions.TransactionFormSheet
 import com.dompetku.ui.screen.transactions.TransferSheet
@@ -21,6 +22,7 @@ fun MainScaffold(
     initialTab: NavTab = NavTab.Home,
     accounts:   List<Account>     = emptyList(),
     allTxns:    List<Transaction>  = emptyList(),
+    soundEnabled: Boolean          = true,
     onTxnSaved: (Transaction) -> Unit = {},
     onTxnDeleted: (Transaction) -> Unit = {},
     onTxnUpdated: (old: Transaction, new: Transaction) -> Unit = { _, _ -> },
@@ -68,9 +70,18 @@ fun MainScaffold(
             onSave    = { txn ->
                 val old = editingTxn
                 when {
-                    old != null                                                   -> onTxnUpdated(old, txn)
-                    txn.type == com.dompetku.domain.model.TransactionType.transfer -> onTransferSaved(txn)
-                    else                                                           -> onTxnSaved(txn)
+                    old != null -> {
+                        onTxnUpdated(old, txn)
+                        SoundManager.playSuccess(soundEnabled)
+                    }
+                    txn.type == com.dompetku.domain.model.TransactionType.transfer -> {
+                        onTransferSaved(txn)
+                        SoundManager.playTransfer(soundEnabled)
+                    }
+                    else -> {
+                        onTxnSaved(txn)
+                        SoundManager.playSuccess(soundEnabled)
+                    }
                 }
                 showTxnForm = false; editingTxn = null
             },
@@ -84,7 +95,7 @@ fun MainScaffold(
             accounts  = accounts,
             onDismiss = { detailTxn = null },
             onEdit    = { t -> editingTxn = t; detailTxn = null },
-            onDelete  = { t -> onTxnDeleted(t); detailTxn = null },
+            onDelete  = { t -> onTxnDeleted(t); SoundManager.playDelete(soundEnabled); detailTxn = null },
         )
     }
 
@@ -93,7 +104,7 @@ fun MainScaffold(
         TransferSheet(
             accounts  = accounts,
             onDismiss = { showTransfer = false },
-            onSave    = { txn -> onTransferSaved(txn); showTransfer = false },
+            onSave    = { txn -> onTransferSaved(txn); SoundManager.playTransfer(soundEnabled); showTransfer = false },
         )
     }
 }

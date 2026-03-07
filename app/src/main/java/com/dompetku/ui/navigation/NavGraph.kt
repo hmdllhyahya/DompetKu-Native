@@ -74,12 +74,14 @@ fun DompetKuNavHost(
             val accountsVm: AccountsViewModel    = hiltViewModel()
             val txnVm: TransactionsViewModel     = hiltViewModel()
 
-            val accounts by accountsVm.accounts.collectAsStateWithLifecycle()
-            val allTxns  by accountsVm.transactions.collectAsStateWithLifecycle()
+            val accounts     by accountsVm.accounts.collectAsStateWithLifecycle()
+            val allTxns      by accountsVm.transactions.collectAsStateWithLifecycle()
+            val rootPrefs    by rootViewModel.prefs.collectAsStateWithLifecycle()
 
             MainScaffold(
                 accounts        = accounts,
                 allTxns         = allTxns,
+                soundEnabled    = rootPrefs?.soundEnabled ?: true,
                 onTxnSaved      = { txn -> txnVm.saveTransaction(txn) },
                 onTxnUpdated    = { old, new -> txnVm.updateTransaction(old, new) },
                 onTxnDeleted    = { txn -> txnVm.deleteTransaction(txn) },
@@ -127,12 +129,14 @@ fun DompetKuNavHost(
 
             val account  = accounts.find { it.id == accountId } ?: return@composable
             val accIndex = accounts.indexOf(account)
+            val hidden   by accountsVm.hideBalance.collectAsStateWithLifecycle()
 
             AccountDetailScreen(
                 account      = account,
                 accIndex     = accIndex,
                 transactions = allTxns,
                 accounts     = accounts,
+                hidden       = hidden,
                 onBack       = { navController.popBackStack() },
                 onEdit       = { editTarget = it },
             )

@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dompetku.data.preferences.UserPreferences
 import com.dompetku.data.repository.AccountRepository
+import com.dompetku.data.repository.AttachmentRepository
 import com.dompetku.data.repository.TransactionRepository
 import com.dompetku.domain.model.Account
+import com.dompetku.domain.model.Attachment
 import com.dompetku.domain.model.Transaction
 import com.dompetku.domain.model.TransactionType
 import com.dompetku.util.DateUtils
+import java.util.UUID
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -36,8 +39,24 @@ data class TxnUiState(
 class TransactionsViewModel @Inject constructor(
     private val transactionRepo: TransactionRepository,
     private val accountRepo:     AccountRepository,
+    private val attachmentRepo:  AttachmentRepository,
     private val userPrefs:       UserPreferences,
 ) : ViewModel() {
+
+    /** Observe attachments for a specific transaction (reactive) */
+    fun attachmentsFlow(txnId: String) = attachmentRepo.flowByTransaction(txnId)
+
+    /** Save content:// URI strings as AttachmentEntity records */
+    private suspend fun persistUriAttachments(txnId: String, uris: List<String>) {
+        uris.filter { it.startsWith("content://") }.forEach { uri ->
+            attachmentRepo.insert(Attachment(
+                id            = "att_${UUID.randomUUID()}",
+                transactionId = txnId,
+                filePath      = uri,
+                mimeType      = if (uri.contains("image", ignoreCase = true)) "image/*" else "*/*",
+            ))
+        }
+    }
 
     private val _filters = MutableStateFlow(TxnFilters())
 
@@ -75,7 +94,10 @@ class TransactionsViewModel @Inject constructor(
 
     fun saveTransaction(txn: Transaction) {
         viewModelScope.launch {
-            transactionRepo.insert(txn)
+            val uriAttachments = txn.attachmentIds.filter { it.startsWith("content://") }
+            val cleanTxn = txn.copy(attachmentIds = emptyList())
+            transactionRepo.insert(cleanTxn)
+            persistUriAttachments(txn.id, uriAttachments)
             when (txn.type) {
                 TransactionType.income   -> accountRepo.adjustBalance(txn.accountId, +txn.amount)
                 TransactionType.expense  -> accountRepo.adjustBalance(txn.accountId, -txn.amount)
@@ -91,6 +113,8 @@ class TransactionsViewModel @Inject constructor(
 
     fun updateTransaction(old: Transaction, new: Transaction) {
         viewModelScope.launch {
+            val uriAttachments = new.attachmentIds.filter { it.startsWith("content://") }
+            val cleanNew = new.copy(attachmentIds = emptyList())
             // 1. Reverse old transaction's balance effect
             when (old.type) {
                 TransactionType.income   -> accountRepo.adjustBalance(old.accountId, -old.amount)
@@ -112,7 +136,8 @@ class TransactionsViewModel @Inject constructor(
                 )
             }
             // 3. Persist
-            transactionRepo.update(new)
+            transactionRepo.update(cleanNew)
+            persistUriAttachments(new.id, uriAttachments)
         }
     }
 

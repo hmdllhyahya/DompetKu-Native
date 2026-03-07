@@ -1,5 +1,8 @@
 package com.dompetku.ui.screen.profile
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -19,11 +22,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dompetku.domain.model.Account
+import com.dompetku.domain.model.AccountType
+import com.dompetku.util.AccountResolution
+import com.dompetku.util.DetectedAccount
+import com.dompetku.util.ImportResult
+import com.dompetku.util.SmartImportResult
+import kotlinx.coroutines.flow.collectLatest
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
@@ -57,12 +68,71 @@ fun ProfileScreen(
     val prefs = state.prefs
     val profile = prefs.userProfile
 
-    var showPinSheet      by remember { mutableStateOf(false) }
-    var showSetPinSheet   by remember { mutableStateOf(false) }
-    var showEditSheet     by remember { mutableStateOf(false) }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var tapCount          by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    var showPinSheet       by remember { mutableStateOf(false) }
+    var showSetPinSheet    by remember { mutableStateOf(false) }
+    var showEditSheet      by remember { mutableStateOf(false) }
+    var showDeleteConfirm  by remember { mutableStateOf(false) }
+    var tapCount           by remember { mutableIntStateOf(0) }
 
+    // Export/Import state
+    var isExporting          by remember { mutableStateOf(false) }
+    var isImporting          by remember { mutableStateOf(false) }
+    var importPreview        by remember { mutableStateOf<ImportResult?>(null) }
+    var smartImportPreview   by remember { mutableStateOf<SmartImportResult?>(null) }
+    var snackbarMessage      by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState    = remember { SnackbarHostState() }
+
+    // Import file picker — uses smart import
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            isImporting = true
+            viewModel.smartPreviewImport(it)
+        }
+    }
+
+    // Collect one-shot events from ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.eiEvent.collectLatest { event ->
+            isExporting = false
+            isImporting = false
+            when (event) {
+                is com.dompetku.ui.screen.profile.EiEvent.ExportSuccess -> {
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        putExtra(Intent.EXTRA_STREAM, event.uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Bagikan file ekspor"))
+                }
+                is com.dompetku.ui.screen.profile.EiEvent.ImportPreviewReady -> {
+                    importPreview = event.result
+                }
+                is com.dompetku.ui.screen.profile.EiEvent.SmartImportPreviewReady -> {
+                    isImporting = false
+                    smartImportPreview = event.result
+                }
+                is com.dompetku.ui.screen.profile.EiEvent.ImportCommitted -> {
+                    snackbarMessage = "Import selesai: ${event.txnCount} transaksi, ${event.accCount} akun" +
+                        if (event.errCount > 0) " (${event.errCount} baris dilewati)" else ""
+                }
+                is com.dompetku.ui.screen.profile.EiEvent.Failure -> {
+                    snackbarMessage = event.message
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(snackbarMessage) {
+        snackbarMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            snackbarMessage = null
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -203,6 +273,31 @@ fun ProfileScreen(
             SectionLabel("DATA")
             ProfileCard {
                 SectionRow(
+                    icon     = PhosphorIcons.Regular.ArrowSquareOut,
+                    iconBg   = Color(0xFFDBEAFE),
+                    iconTint = Color(0xFF3B82F6),
+                    title    = "Ekspor Data",
+                    subtitle = if (isExporting) "Sedang mengekspor..." else "Simpan ke XLSX",
+                    onClick  = {
+                        if (!isExporting) {
+                            isExporting = true
+                            viewModel.triggerExport()
+                        }
+                    },
+                )
+                HorizontalDivider(color = Color(0xFFF8FAFC))
+                SectionRow(
+                    icon     = PhosphorIcons.Regular.ArrowSquareIn,
+                    iconBg   = Color(0xFFD1FAE5),
+                    iconTint = GreenPrimary,
+                    title    = "Impor Data",
+                    subtitle = if (isImporting) "Membaca file..." else "Muat dari XLSX",
+                    onClick  = {
+                        if (!isImporting) importLauncher.launch("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    },
+                )
+                HorizontalDivider(color = Color(0xFFF8FAFC))
+                SectionRow(
                     icon = PhosphorIcons.Regular.Trash, iconBg = RedLight, iconTint = RedExpense,
                     title    = "Hapus Semua Data",
                     subtitle = "Transaksi & akun akan dihapus permanen",
@@ -229,6 +324,43 @@ fun ProfileScreen(
                 )
             }
         }
+    }
+
+    // Snackbar host
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier  = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp),
+    )
+
+    } // end Box
+
+    // ── Smart Import dialog ───────────────────────────────────────────────
+    smartImportPreview?.let { result ->
+        SmartImportDialog(
+            result           = result,
+            existingAccounts = state.accounts,
+            onDismiss        = { smartImportPreview = null },
+            onCommit         = { resolutions, replace ->
+                viewModel.commitSmartImport(result, resolutions, replace)
+                smartImportPreview = null
+            },
+        )
+    }
+
+    // ── Import preview dialog (legacy) ─────────────────────────────────
+    importPreview?.let { preview ->
+        ImportPreviewDialog(
+            preview   = preview,
+            onDismiss = { importPreview = null },
+            onMerge   = {
+                viewModel.commitImport(preview, replace = false)
+                importPreview = null
+            },
+            onReplace = {
+                viewModel.commitImport(preview, replace = true)
+                importPreview = null
+            },
+        )
     }
 
     // ── Edit profile sheet ────────────────────────────────────────────────────
@@ -274,6 +406,103 @@ fun ProfileScreen(
             dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Batal") } },
         )
     }
+}
+
+// ── Import preview dialog ───────────────────────────────────────────────────
+@Composable
+private fun ImportPreviewDialog(
+    preview:   ImportResult,
+    onDismiss: () -> Unit,
+    onMerge:   () -> Unit,
+    onReplace: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = PageBg,
+        shape            = RoundedCornerShape(24.dp),
+        title = {
+            Text("Konfirmasi Import", fontWeight = FontWeight.ExtraBold, color = TextDark)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Summary counts
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFDBEAFE))
+                            .padding(10.dp),
+                    ) {
+                        Column {
+                            Text("${preview.transactions.size}", fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color(0xFF3B82F6))
+                            Text("transaksi", fontSize = 11.sp, color = TextMedium)
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(GreenLight)
+                            .padding(10.dp),
+                    ) {
+                        Column {
+                            Text("${preview.accounts.size}", fontSize = 20.sp, fontWeight = FontWeight.Black, color = GreenPrimary)
+                            Text("akun", fontSize = 11.sp, color = TextMedium)
+                        }
+                    }
+                }
+                if (preview.errors.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(RedLight)
+                            .padding(10.dp),
+                    ) {
+                        Text(
+                            text = "⚠️ ${preview.errors.size} baris tidak bisa dibaca dan akan dilewati.",
+                            fontSize = 12.sp, color = RedExpense,
+                        )
+                    }
+                }
+                Text(
+                    text = "Pilih mode import:",
+                    fontSize = 13.sp, color = TextMedium,
+                )
+            }
+        },
+        confirmButton = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            ) {
+                Button(
+                    onClick  = onMerge,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape    = RoundedCornerShape(12.dp),
+                    colors   = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                ) {
+                    Text("Gabungkan", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick  = onReplace,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape    = RoundedCornerShape(12.dp),
+                    colors   = ButtonDefaults.outlinedButtonColors(contentColor = RedExpense),
+                    border   = androidx.compose.foundation.BorderStroke(1.dp, RedExpense),
+                ) {
+                    Text("Ganti Semua Data", fontWeight = FontWeight.Bold)
+                }
+                TextButton(
+                    onClick  = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Batal", color = TextMedium)
+                }
+            }
+        },
+    )
 }
 
 // ── Change PIN sheet ──────────────────────────────────────────────────────────
@@ -517,4 +746,448 @@ private fun ProfileCard(
             .then(if (innerPadding) Modifier.padding(14.dp) else Modifier),
         content = content,
     )
+}
+
+// ── Smart Import Dialog ─────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SmartImportDialog(
+    result:           SmartImportResult,
+    existingAccounts: List<Account>,
+    onDismiss:        () -> Unit,
+    onCommit:         (resolutions: Map<String, AccountResolution>, replace: Boolean) -> Unit,
+) {
+    // Auto-resolve high-confidence matches (≥ 0.7) upfront
+    val initialResolutions = remember(result) {
+        result.detectedAccounts.associate { da ->
+            da.rawName to (
+                if (da.suggestedMatch != null && da.matchScore >= 0.7f)
+                    AccountResolution.UseExisting(da.suggestedMatch)
+                else
+                    AccountResolution.Skip  // placeholder — user resolves
+            )
+        }
+    }
+
+    var resolutions  by remember { mutableStateOf(initialResolutions) }
+    val needsResolve  = result.detectedAccounts.filter { it.matchScore < 0.7f }
+    var step         by remember { mutableIntStateOf(if (needsResolve.isNotEmpty()) 0 else 1) }
+    var expandCatMap by remember { mutableStateOf(false) }
+
+    // step 0: account resolution
+    if (step == 0) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor   = PageBg,
+            shape            = RoundedCornerShape(24.dp),
+            title = { Text("Cocokkan Akun", fontWeight = FontWeight.ExtraBold, color = TextDark) },
+            text  = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        "Beberapa akun di file tidak dikenali. Tentukan ke mana transaksi mereka akan disimpan.",
+                        fontSize = 13.sp, color = TextMedium,
+                    )
+                    needsResolve.forEach { da ->
+                        AccountResolutionCard(
+                            detected         = da,
+                            existingAccounts = existingAccounts,
+                            current          = resolutions[da.rawName],
+                            onChange         = { resolution ->
+                                resolutions = resolutions + (da.rawName to resolution)
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Button(
+                        onClick  = { step = 1 },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape    = RoundedCornerShape(12.dp),
+                        colors   = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                        enabled  = needsResolve.all { resolutions[it.rawName] !is AccountResolution.Skip ||
+                            resolutions[it.rawName] is AccountResolution.Skip },
+                    ) { Text("Lanjut → Ringkasan", fontWeight = FontWeight.Bold) }
+                    TextButton(
+                        onClick  = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Batal", color = TextMedium) }
+                }
+            },
+        )
+        return
+    }
+
+    // step 1: summary + confirm
+    val totalTxn  = result.transactions.size
+    val willSkip  = result.detectedAccounts.count { resolutions[it.rawName] is AccountResolution.Skip }
+    val willSave  = totalTxn - result.transactions.count { txn ->
+        resolutions[txn.rawAccountName] is AccountResolution.Skip
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = PageBg,
+        shape            = RoundedCornerShape(24.dp),
+        title = { Text("Konfirmasi Import", fontWeight = FontWeight.ExtraBold, color = TextDark) },
+        text  = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // File info chip
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .padding(10.dp),
+                ) {
+                    Text(result.fileInfo, fontSize = 11.sp, color = TextMedium)
+                }
+
+                // Stats row
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SmartStatChip(
+                        value = "$willSave",
+                        label = "transaksi",
+                        bg    = Color(0xFFDBEAFE),
+                        fg    = Color(0xFF3B82F6),
+                        modifier = Modifier.weight(1f),
+                    )
+                    SmartStatChip(
+                        value = "${result.detectedAccounts.size}",
+                        label = "akun",
+                        bg    = GreenLight,
+                        fg    = GreenPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SmartStatChip(
+                        value = "${result.categoryMappings.size}",
+                        label = "kategori",
+                        bg    = Color(0xFFEDE9FE),
+                        fg    = Color(0xFF8B5CF6),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                // Auto-sign info
+                if (result.autoSignCount > 0) {
+                    SmartInfoBanner(
+                        text = "ℹ️ ${result.autoSignCount} transaksi bertanda negatif otomatis dijadikan Pengeluaran.",
+                        bg   = Color(0xFFFEF3C7),
+                        fg   = Color(0xFFB45309),
+                    )
+                }
+
+                // Extra fields info
+                if (result.extraFieldCount > 0) {
+                    SmartInfoBanner(
+                        text = "📋 ${result.extraFieldCount} transaksi punya kolom tambahan — dipindah ke Catatan.",
+                        bg   = Color(0xFFDBEAFE),
+                        fg   = Color(0xFF3B82F6),
+                    )
+                }
+
+                // Skipped accounts warning
+                if (willSkip > 0) {
+                    SmartInfoBanner(
+                        text = "⚠️ $willSkip akun dilewati — transaksi mereka tidak akan diimpor.",
+                        bg   = RedLight,
+                        fg   = RedExpense,
+                    )
+                }
+
+                // Errors
+                if (result.errors.isNotEmpty()) {
+                    SmartInfoBanner(
+                        text = "⚠️ ${result.errors.size} baris tidak bisa dibaca dan akan dilewati.",
+                        bg   = RedLight,
+                        fg   = RedExpense,
+                    )
+                }
+
+                // Category mapping (collapsible)
+                if (result.categoryMappings.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFF1F5F9))
+                            .clickable { expandCatMap = !expandCatMap }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Pemetaan Kategori", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextMedium)
+                        Icon(
+                            if (expandCatMap) PhosphorIcons.Regular.CaretUp else PhosphorIcons.Regular.CaretDown,
+                            null, tint = TextLight, modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    if (expandCatMap) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFFF8FAFC))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            result.categoryMappings.forEach { (raw, mapped) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        raw.ifBlank { "(kosong)" },
+                                        fontSize = 11.sp, color = TextMedium,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        "→ $mapped",
+                                        fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                        color = if (mapped == "Lainnya") TextLight else GreenPrimary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (needsResolve.isNotEmpty()) {
+                    TextButton(
+                        onClick  = { step = 0 },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("← Kembali ke Cocokkan Akun", color = Color(0xFF3B82F6)) }
+                }
+                Button(
+                    onClick  = { onCommit(resolutions, false) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape    = RoundedCornerShape(12.dp),
+                    colors   = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                ) { Text("Gabungkan", fontWeight = FontWeight.Bold) }
+                OutlinedButton(
+                    onClick  = { onCommit(resolutions, true) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape    = RoundedCornerShape(12.dp),
+                    colors   = ButtonDefaults.outlinedButtonColors(contentColor = RedExpense),
+                    border   = androidx.compose.foundation.BorderStroke(1.dp, RedExpense),
+                ) { Text("Ganti Semua Data", fontWeight = FontWeight.Bold) }
+                TextButton(
+                    onClick  = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Batal", color = TextMedium) }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AccountResolutionCard(
+    detected:         DetectedAccount,
+    existingAccounts: List<Account>,
+    current:          AccountResolution?,
+    onChange:         (AccountResolution) -> Unit,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardWhite)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // Header: rawName + txn count
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column {
+                Text(
+                    detected.rawName,
+                    fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = TextDark,
+                )
+                Text(
+                    "${detected.transactionCount} transaksi",
+                    fontSize = 11.sp, color = TextMedium,
+                )
+            }
+            if (detected.suggestedMatch != null) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(GreenLight)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        "${(detected.matchScore * 100).toInt()}% cocok",
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold, color = GreenPrimary,
+                    )
+                }
+            }
+        }
+
+        // Suggested match (if any)
+        if (detected.suggestedMatch != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (current is AccountResolution.UseExisting &&
+                            current.account.id == detected.suggestedMatch.id)
+                            GreenLight else Color(0xFFF1F5F9)
+                    )
+                    .clickable { onChange(AccountResolution.UseExisting(detected.suggestedMatch)) }
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Pakai \"${detected.suggestedMatch.name}\"",
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextDark,
+                )
+                if (current is AccountResolution.UseExisting &&
+                    current.account.id == detected.suggestedMatch.id) {
+                    Icon(PhosphorIcons.Regular.Check, null, tint = GreenPrimary,
+                        modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+
+        // Pick another account
+        if (existingAccounts.isNotEmpty()) {
+            var expanded by remember { mutableStateOf(false) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (current is AccountResolution.UseExisting &&
+                            current.account.id != detected.suggestedMatch?.id)
+                            Color(0xFFDBEAFE) else Color(0xFFF1F5F9)
+                    )
+                    .clickable { expanded = true }
+                    .padding(10.dp),
+            ) {
+                val chosenLabel = if (current is AccountResolution.UseExisting &&
+                    current.account.id != detected.suggestedMatch?.id)
+                    "Pakai \"${current.account.name}\""
+                else "Pilih akun lain..."
+                Text(chosenLabel, fontSize = 12.sp, color = TextMedium)
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    existingAccounts.forEach { acc ->
+                        DropdownMenuItem(
+                            text    = { Text(acc.name, fontSize = 13.sp) },
+                            onClick = {
+                                onChange(AccountResolution.UseExisting(acc))
+                                expanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        // Create new / Skip row
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (current is AccountResolution.CreateNew)
+                            Color(0xFFEDE9FE) else Color(0xFFF1F5F9)
+                    )
+                    .clickable { onChange(AccountResolution.CreateNew(detected.rawName)) }
+                    .padding(vertical = 8.dp, horizontal = 10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(PhosphorIcons.Regular.Plus, null,
+                        tint = if (current is AccountResolution.CreateNew) Color(0xFF8B5CF6) else TextLight,
+                        modifier = Modifier.size(13.dp))
+                    Text(
+                        "Buat akun baru",
+                        fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        color = if (current is AccountResolution.CreateNew) Color(0xFF8B5CF6) else TextLight,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (current is AccountResolution.Skip)
+                            RedLight else Color(0xFFF1F5F9)
+                    )
+                    .clickable { onChange(AccountResolution.Skip) }
+                    .padding(vertical = 8.dp, horizontal = 10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(PhosphorIcons.Regular.X, null,
+                        tint = if (current is AccountResolution.Skip) RedExpense else TextLight,
+                        modifier = Modifier.size(13.dp))
+                    Text(
+                        "Lewati",
+                        fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        color = if (current is AccountResolution.Skip) RedExpense else TextLight,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmartStatChip(
+    value: String, label: String, bg: Color, fg: Color, modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .padding(10.dp),
+    ) {
+        Column {
+            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Black, color = fg)
+            Text(label, fontSize = 11.sp, color = TextMedium)
+        }
+    }
+}
+
+@Composable
+private fun SmartInfoBanner(text: String, bg: Color, fg: Color) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .padding(10.dp),
+    ) {
+        Text(text, fontSize = 12.sp, color = fg)
+    }
 }

@@ -103,6 +103,9 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachments WHERE transactionId = :txnId")
     suspend fun getByTransaction(txnId: String): List<AttachmentEntity>
 
+    @Query("SELECT * FROM attachments WHERE transactionId = :txnId")
+    fun observeByTransaction(txnId: String): Flow<List<AttachmentEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: AttachmentEntity)
 

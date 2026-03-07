@@ -1,8 +1,13 @@
 package com.dompetku.ui.screen.transactions
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -14,10 +19,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
@@ -38,11 +46,22 @@ fun TransferSheet(
     onDismiss: () -> Unit,
     onSave:    (Transaction) -> Unit,
 ) {
-    var fromId    by remember { mutableStateOf(accounts.getOrNull(0)?.id ?: "") }
-    var toId      by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: "") }
-    var amountStr by remember { mutableStateOf("") }
-    var adminFee  by remember { mutableStateOf("") }
-    var note      by remember { mutableStateOf("") }
+    var fromId      by remember { mutableStateOf(accounts.getOrNull(0)?.id ?: "") }
+    var toId        by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: "") }
+    var amountStr   by remember { mutableStateOf("") }
+    var adminFee    by remember { mutableStateOf("") }
+    var note        by remember { mutableStateOf("") }
+    var attachments by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    val context = LocalContext.current
+    val attachmentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        uris.forEach { uri ->
+            try { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+        }
+        attachments = (attachments + uris.map { it.toString() }).distinct().take(5)
+    }
 
     val fromAcc = accounts.find { it.id == fromId }
     val toAcc   = accounts.find { it.id == toId }
@@ -156,6 +175,57 @@ fun TransferSheet(
                 Spacer(Modifier.height(8.dp))
             }
 
+            // Attachment section
+            Column(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardWhite)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically,
+                    modifier              = Modifier.fillMaxWidth().padding(bottom = if (attachments.isEmpty()) 0.dp else 8.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(PhosphorIcons.Regular.Paperclip, null, tint = TextLight, modifier = Modifier.size(15.dp))
+                        Text("LAMPIRAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+                        if (attachments.isNotEmpty()) Text("(${attachments.size}/5)", fontSize = 9.sp, color = TextLight)
+                    }
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(GreenLight)
+                            .clickable { attachmentLauncher.launch("image/*") }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(PhosphorIcons.Regular.Plus, null, tint = GreenPrimary, modifier = Modifier.size(12.dp))
+                            Text("Tambah Foto", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
+                        }
+                    }
+                }
+                if (attachments.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(attachments) { uriStr ->
+                            Box(modifier = Modifier.size(72.dp)) {
+                                AsyncImage(
+                                    model = Uri.parse(uriStr), contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                                )
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.size(18.dp).align(Alignment.TopEnd)
+                                        .clip(RoundedCornerShape(99.dp)).background(Color(0xFFEF4444))
+                                        .clickable { attachments = attachments.filter { it != uriStr } },
+                                ) {
+                                    Icon(PhosphorIcons.Regular.X, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
             // Note
             Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardWhite).padding(14.dp).padding(bottom = 10.dp)) {
                 Text("CATATAN (OPSIONAL)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 4.dp))
@@ -173,14 +243,15 @@ fun TransferSheet(
                 enabled = amt > 0 && fromId.isNotEmpty() && toId.isNotEmpty() && fromId != toId && !insufficient,
                 onClick = {
                     onSave(Transaction(
-                        id        = UUID.randomUUID().toString(),
-                        type      = TransactionType.transfer,
-                        amount    = amt, adminFee = fee,
-                        category  = "Transfer",
-                        note      = note,
-                        date      = DateUtils.todayStr(),
-                        time      = DateUtils.nowTimeStr(),
-                        accountId = fromId, fromId = fromId, toId = toId,
+                        id            = UUID.randomUUID().toString(),
+                        type          = TransactionType.transfer,
+                        amount        = amt, adminFee = fee,
+                        category      = "Transfer",
+                        note          = note,
+                        date          = DateUtils.todayStr(),
+                        time          = DateUtils.nowTimeStr(),
+                        accountId     = fromId, fromId = fromId, toId = toId,
+                        attachmentIds = attachments,
                     ))
                     onDismiss()
                 },

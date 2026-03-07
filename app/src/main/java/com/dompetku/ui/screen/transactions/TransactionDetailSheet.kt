@@ -3,6 +3,8 @@ package com.dompetku.ui.screen.transactions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -13,9 +15,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import com.dompetku.domain.model.Attachment
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
@@ -40,6 +47,10 @@ fun TransactionDetailSheet(
     val cfg      = catConfig(txn.category)
     val account  = accounts.find { it.id == txn.accountId }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    // Load attachments reactively
+    val txnVm: TransactionsViewModel = hiltViewModel()
+    val attachments by txnVm.attachmentsFlow(txn.id).collectAsStateWithLifecycle(emptyList())
 
     val amountColor = when (txn.type) {
         TransactionType.income   -> GreenPrimary
@@ -162,6 +173,67 @@ fun TransactionDetailSheet(
                         }
                     }
                 }
+                // Contextual details
+                if (txn.details.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(CardWhite).padding(14.dp),
+                    ) {
+                        Text("DETAIL", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 8.dp))
+                        txn.details.entries.forEachIndexed { i, (key, value) ->
+                            if (i > 0) HorizontalDivider(color = Color(0xFFF8FAFC), thickness = 1.dp)
+                            // Find the label from SmartCategoryDetector
+                            val fieldLabel = com.dompetku.util.SmartCategoryDetector
+                                .contextFieldsFor(txn.category)
+                                .find { it.key == key }?.label ?: key.replaceFirstChar { it.uppercase() }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            ) {
+                                Text(fieldLabel, fontSize = 12.sp, color = TextLight, modifier = Modifier.weight(1f))
+                                Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+                            }
+                        }
+                    }
+                }
+
+                // Attachments
+                if (attachments.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(CardWhite)
+                            .padding(14.dp),
+                    ) {
+                        Row(
+                            verticalAlignment     = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier              = Modifier.padding(bottom = 8.dp),
+                        ) {
+                            Icon(PhosphorIcons.Regular.Paperclip, null, tint = TextLight, modifier = Modifier.size(13.dp))
+                            Text(
+                                "LAMPIRAN (${attachments.size})",
+                                fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                color = TextLight, letterSpacing = 0.6.sp,
+                            )
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(attachments) { att ->
+                                AsyncImage(
+                                    model              = android.net.Uri.parse(att.filePath),
+                                    contentDescription = null,
+                                    contentScale       = ContentScale.Crop,
+                                    modifier           = Modifier
+                                        .size(88.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
             }
         }

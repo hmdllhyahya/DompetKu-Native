@@ -1,20 +1,30 @@
 package com.dompetku.ui.screen.transactions
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyRow
+import coil.compose.AsyncImage
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -28,6 +38,7 @@ import com.dompetku.domain.model.TransactionType
 import com.dompetku.ui.components.CategoryBubble
 import com.dompetku.ui.components.GreenButton
 import com.dompetku.ui.theme.*
+import com.dompetku.util.CurrencyFormatter
 import com.dompetku.util.DateUtils
 import com.dompetku.util.SmartCategoryDetector
 import androidx.compose.foundation.text.KeyboardOptions
@@ -43,18 +54,20 @@ private val CATS_INCOME = listOf(
 )
 
 private data class TxnForm(
-    val txType:    String  = "expense",
-    val amountStr: String  = "",
-    val category:  String  = "Makan & Minum",
-    val note:      String  = "",
-    val date:      String  = DateUtils.todayStr(),
-    val time:      String  = DateUtils.nowTimeStr(),
-    val accountId: String  = "",
+    val txType:        String       = "expense",
+    val amountStr:     String       = "",
+    val category:      String       = "Makan & Minum",
+    val note:          String       = "",
+    val date:          String       = DateUtils.todayStr(),
+    val time:          String       = DateUtils.nowTimeStr(),
+    val accountId:     String       = "",
     // Transfer fields
-    val fromId:    String  = "",
-    val toId:      String  = "",
-    val adminFee:  String  = "",
-    val detected:  Boolean = false,
+    val fromId:        String       = "",
+    val toId:          String       = "",
+    val adminFee:      String               = "",
+    val detected:      Boolean              = false,
+    val attachments:   List<String>         = emptyList(),  // content:// URI strings
+    val details:       Map<String, String>  = emptyMap(),   // contextual fields
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,10 +89,11 @@ fun TransactionFormSheet(
                 date      = initial.date,
                 time      = initial.time,
                 accountId = initial.accountId,
-                // If editing a non-transfer, pre-fill fromId with the source account
-                // so switching to transfer type already has DARI AKUN selected
                 fromId    = initial.fromId ?: initial.accountId,
                 toId      = initial.toId   ?: "",
+                adminFee  = if (initial.adminFee > 0) initial.adminFee.toString() else "",
+                detected  = initial.detected ?: false,
+                details   = initial.details,
             )
             else TxnForm(accountId = accounts.firstOrNull()?.id ?: "",
                          fromId    = accounts.getOrNull(0)?.id ?: "",
@@ -87,16 +101,43 @@ fun TransactionFormSheet(
         )
     }
 
+    val context = LocalContext.current
     var detectionBanner by remember { mutableStateOf<String?>(null) }
+
+    // ── Attachment picker ─────────────────────────────────────────────────────
+    val attachmentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        uris.forEach { uri ->
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+        }
+        form = form.copy(
+            attachments = (form.attachments + uris.map { it.toString() }).distinct().take(5)
+        )
+    }
+
+    var easterEggBanner by remember { mutableStateOf<String?>(null) }
 
     fun handleNoteChange(note: String) {
         form = form.copy(note = note)
         val result = SmartCategoryDetector.detect(note)
         if (result != null && form.txType != "income") {
             form            = form.copy(category = result.category, detected = true)
-            detectionBanner = result.category
+            if (result.isEasterEgg) {
+                easterEggBanner = result.easterEggLabel
+                detectionBanner = null
+            } else {
+                easterEggBanner = null
+                detectionBanner = result.category
+            }
         } else {
             detectionBanner = null
+            easterEggBanner = null
             form            = form.copy(detected = false)
         }
     }
@@ -239,6 +280,10 @@ fun TransactionFormSheet(
                 detectionBanner?.let { cat ->
                     AutoDetectBadge(category = cat)
                 }
+                // Easter egg banner
+                easterEggBanner?.let { msg ->
+                    EasterEggBadge(label = msg)
+                }
 
                 // ── Category grid ─────────────────────────────────────────────
                 FormCard(label = "KATEGORI") {
@@ -278,35 +323,90 @@ fun TransactionFormSheet(
                     }
                 }
 
-                // ── Account + Date ─────────────────────────────────────────────
+                // ── Contextual fields ─────────────────────────────────────
+                val ctxFields = remember(form.category) { SmartCategoryDetector.contextFieldsFor(form.category) }
+                if (ctxFields.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    FormCard(label = "DETAIL TAMBAHAN") {
+                        ctxFields.forEachIndexed { i, field ->
+                            if (i > 0) HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+                            OutlinedTextField(
+                                value         = form.details[field.key] ?: "",
+                                onValueChange = { v -> form = form.copy(details = form.details + (field.key to v)) },
+                                placeholder   = { Text(field.hint, color = TextLight, fontSize = 12.sp) },
+                                label         = { Text(field.label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight) },
+                                colors        = clearFieldColors(),
+                                singleLine    = true,
+                                modifier      = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+
+                // ── Account picker (colored cards) ────────────────────────────
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 10.dp)) {
-                    FormCard(label = "AKUN", modifier = Modifier.weight(1f)) {
-                        if (accounts.isEmpty()) {
-                            Text("Buat akun dulu!", fontSize = 12.sp, color = RedExpense)
-                        } else {
-                            var expanded by remember { mutableStateOf(false) }
-                            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-                                OutlinedTextField(
-                                    value = accounts.find { it.id == form.accountId }?.name ?: "",
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                                    colors = clearFieldColors(),
-                                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
-                                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                )
-                                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(CardWhite)) {
-                                    accounts.forEach { acc ->
-                                        DropdownMenuItem(
-                                            text = { Text(acc.name, fontSize = 13.sp) },
-                                            onClick = { form = form.copy(accountId = acc.id); expanded = false },
+                if (accounts.isEmpty()) {
+                    FormCard { Text("Buat akun dulu!", fontSize = 12.sp, color = RedExpense) }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(CardWhite)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Text("AKUN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 8.dp))
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp),
+                        ) {
+                            items(accounts.size) { i ->
+                                val acc    = accounts[i]
+                                val active = acc.id == form.accountId
+                                Box(
+                                    modifier = Modifier
+                                        .width(130.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            Brush.linearGradient(listOf(
+                                                Color(acc.gradientStart.toInt()),
+                                                Color(acc.gradientEnd.toInt()),
+                                            ))
                                         )
+                                        .then(if (active) Modifier.border(2.dp, Color.White, RoundedCornerShape(12.dp)) else Modifier)
+                                        .clickable { form = form.copy(accountId = acc.id) }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                ) {
+                                    Column {
+                                        Row(
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment     = Alignment.CenterVertically,
+                                            modifier              = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                        ) {
+                                            Icon(
+                                                imageVector = when (acc.type) {
+                                                    com.dompetku.domain.model.AccountType.ewallet -> PhosphorIcons.Regular.DeviceMobile
+                                                    com.dompetku.domain.model.AccountType.cash    -> PhosphorIcons.Regular.Wallet
+                                                    com.dompetku.domain.model.AccountType.emoney  -> PhosphorIcons.Regular.WifiHigh
+                                                    else -> PhosphorIcons.Regular.CreditCard
+                                                },
+                                                contentDescription = null,
+                                                tint     = Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(14.dp),
+                                            )
+                                            if (active) Icon(PhosphorIcons.Regular.CheckCircle, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                        }
+                                        Text(acc.name, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                        Text(CurrencyFormatter.compact(acc.balance), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.85f))
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                // ── Date ──────────────────────────────────────────────────────
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 10.dp)) {
                     FormCard(label = "TANGGAL", modifier = Modifier.weight(1f)) {
                         OutlinedTextField(
                             value = form.date,
@@ -316,6 +416,7 @@ fun TransactionFormSheet(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                    Spacer(Modifier.weight(1f))
                 }
 
                 // ── Time ──────────────────────────────────────────────────────
@@ -329,6 +430,75 @@ fun TransactionFormSheet(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+            }
+
+            // ── Attachment section ────────────────────────────────────────────────
+            Spacer(Modifier.height(10.dp))
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CardWhite)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically,
+                    modifier              = Modifier.fillMaxWidth().padding(bottom = if (form.attachments.isEmpty()) 0.dp else 8.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(PhosphorIcons.Regular.Paperclip, null, tint = TextLight, modifier = Modifier.size(15.dp))
+                        Text("LAMPIRAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+                        if (form.attachments.isNotEmpty()) {
+                            Text(
+                                "(${form.attachments.size}/5)",
+                                fontSize = 9.sp, color = TextLight,
+                            )
+                        }
+                    }
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(GreenLight)
+                            .clickable { attachmentLauncher.launch("image/*") }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(PhosphorIcons.Regular.Plus, null, tint = GreenPrimary, modifier = Modifier.size(12.dp))
+                            Text("Tambah Foto", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
+                        }
+                    }
+                }
+                // Thumbnail row
+                if (form.attachments.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(form.attachments.size) { i ->
+                            val uriStr = form.attachments[i]
+                            Box(modifier = Modifier.size(72.dp)) {
+                                AsyncImage(
+                                    model             = android.net.Uri.parse(uriStr),
+                                    contentDescription = null,
+                                    contentScale      = ContentScale.Crop,
+                                    modifier          = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                                )
+                                // Remove button
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .align(Alignment.TopEnd)
+                                        .clip(RoundedCornerShape(99.dp))
+                                        .background(Color(0xFFEF4444))
+                                        .clickable {
+                                            form = form.copy(attachments = form.attachments.toMutableList().also { it.removeAt(i) })
+                                        },
+                                ) {
+                                    Icon(PhosphorIcons.Regular.X, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -480,6 +650,35 @@ private fun AutoDetectBadge(category: String) {
     }
 }
 
+// ── Easter egg badge (KCIJ / Whoosh) ──────────────────────────────────────────
+@Composable
+private fun EasterEggBadge(label: String) {
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "egg_pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 1.04f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(600),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+        ), label = "egg_scale",
+    )
+    Row(
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(
+                Color(0xFF60A5FA), Color(0xFF3B82F6),
+            )))
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .padding(horizontal = 13.dp, vertical = 9.dp),
+    ) {
+        Text("🚄", fontSize = 16.sp)
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+    }
+}
+
 // ── Build Transaction from form ───────────────────────────────────────────────
 private fun buildTransaction(form: TxnForm, initial: Transaction?, accounts: List<Account>): Transaction? {
     val id = initial?.id ?: java.util.UUID.randomUUID().toString()
@@ -489,21 +688,24 @@ private fun buildTransaction(form: TxnForm, initial: Transaction?, accounts: Lis
             val fee = form.adminFee.toLongOrNull() ?: 0L
             if (form.fromId.isEmpty() || form.toId.isEmpty() || form.fromId == form.toId) return null
             Transaction(
-                id       = id, type = com.dompetku.domain.model.TransactionType.transfer,
-                amount   = amt, adminFee = fee, category = "Transfer",
-                note     = form.note, date = form.date, time = form.time,
-                accountId = form.fromId, fromId = form.fromId, toId = form.toId,
+                id            = id, type = com.dompetku.domain.model.TransactionType.transfer,
+                amount        = amt, adminFee = fee, category = "Transfer",
+                note          = form.note, date = form.date, time = form.time,
+                accountId     = form.fromId, fromId = form.fromId, toId = form.toId,
+                attachmentIds = form.attachments,
             )
         }
         else -> {
             val amt = form.amountStr.toLongOrNull() ?: return null
             if (form.accountId.isEmpty()) return null
             Transaction(
-                id        = id,
-                type      = if (form.txType == "income") com.dompetku.domain.model.TransactionType.income else com.dompetku.domain.model.TransactionType.expense,
-                amount    = amt, category = form.category,
-                note      = form.note, date = form.date, time = form.time,
-                accountId = form.accountId, detected = form.detected,
+                id            = id,
+                type          = if (form.txType == "income") com.dompetku.domain.model.TransactionType.income else com.dompetku.domain.model.TransactionType.expense,
+                amount        = amt, category = form.category,
+                note          = form.note, date = form.date, time = form.time,
+                accountId     = form.accountId, detected = form.detected,
+                attachmentIds = form.attachments,
+                details       = form.details.filter { it.value.isNotBlank() },
             )
         }
     }

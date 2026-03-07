@@ -152,16 +152,29 @@ fun AccountsScreen(
                     modifier              = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                 ) {
                     row.forEachIndexed { _, acc ->
+                        val idx = accounts.indexOf(acc)
                         AccountCard(
-                            account      = acc,
-                            accIndex     = accounts.indexOf(acc),
-                            editMode     = editMode,
-                            hidden       = hidden,
-                            modifier     = Modifier.weight(1f),
-                            onTap        = { if (!editMode) onNavigateToDetail(acc.id) },
-                            onLongPress  = { editMode = true },
-                            onEdit       = { editTarget = acc },
-                            onDelete     = { deleteTarget = acc },
+                            account        = acc,
+                            accIndex       = idx,
+                            editMode       = editMode,
+                            hidden         = hidden,
+                            canMoveBack    = idx > 0,
+                            canMoveForward = idx < accounts.lastIndex,
+                            modifier       = Modifier.weight(1f),
+                            onTap          = { if (!editMode) onNavigateToDetail(acc.id) },
+                            onLongPress    = { editMode = true },
+                            onEdit         = { editTarget = acc },
+                            onDelete       = { deleteTarget = acc },
+                            onMoveBack     = {
+                                val list = accounts.toMutableList()
+                                list.add(idx - 1, list.removeAt(idx))
+                                viewModel.reorderAccounts(list)
+                            },
+                            onMoveForward  = {
+                                val list = accounts.toMutableList()
+                                list.add(idx + 1, list.removeAt(idx))
+                                viewModel.reorderAccounts(list)
+                            },
                         )
                     }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
@@ -210,15 +223,19 @@ fun AccountsScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AccountCard(
-    account:     Account,
-    accIndex:    Int,
-    editMode:    Boolean,
-    hidden:      Boolean = false,
-    modifier:    Modifier = Modifier,
-    onTap:       () -> Unit,
-    onLongPress: () -> Unit = {},
-    onEdit:      () -> Unit,
-    onDelete:    () -> Unit,
+    account:       Account,
+    accIndex:      Int,
+    editMode:      Boolean,
+    hidden:        Boolean  = false,
+    canMoveBack:   Boolean  = false,
+    canMoveForward: Boolean = false,
+    modifier:      Modifier = Modifier,
+    onTap:         () -> Unit,
+    onLongPress:   () -> Unit = {},
+    onEdit:        () -> Unit,
+    onDelete:      () -> Unit,
+    onMoveBack:    () -> Unit = {},
+    onMoveForward: () -> Unit = {},
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "jiggle")
     val jiggleAngle by infiniteTransition.animateFloat(
@@ -290,8 +307,21 @@ private fun AccountCard(
             }
         }
 
-        // Edit / Delete row
+        // Edit / Delete / Reorder row
         Row(modifier = Modifier.fillMaxWidth().height(40.dp)) {
+            if (editMode && (canMoveBack || canMoveForward)) {
+                // ← move back
+                Box(contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(40.dp).fillMaxHeight()
+                        .clickable(enabled = canMoveBack) { onMoveBack() }) {
+                    Icon(
+                        PhosphorIcons.Regular.ArrowLeft, null,
+                        tint = if (canMoveBack) GreenPrimary else Color(0xFFD1D5DB),
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+                VerticalDivider(color = Color(0xFFF1F5F9))
+            }
             Box(contentAlignment = Alignment.Center,
                 modifier = Modifier.weight(1f).fillMaxHeight().clickable { onEdit() }) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -305,6 +335,19 @@ private fun AccountCard(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(PhosphorIcons.Regular.Trash, null, tint = RedExpense, modifier = Modifier.size(13.dp))
                     Text("Hapus", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RedExpense)
+                }
+            }
+            if (editMode && (canMoveBack || canMoveForward)) {
+                VerticalDivider(color = Color(0xFFF1F5F9))
+                // → move forward
+                Box(contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(40.dp).fillMaxHeight()
+                        .clickable(enabled = canMoveForward) { onMoveForward() }) {
+                    Icon(
+                        PhosphorIcons.Regular.ArrowRight, null,
+                        tint = if (canMoveForward) GreenPrimary else Color(0xFFD1D5DB),
+                        modifier = Modifier.size(14.dp),
+                    )
                 }
             }
         }
