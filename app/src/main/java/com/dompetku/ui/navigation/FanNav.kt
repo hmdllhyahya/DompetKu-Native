@@ -1,5 +1,6 @@
 package com.dompetku.ui.navigation
 
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -28,40 +28,34 @@ import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
 import com.dompetku.ui.components.DompetKuLogo
 import com.dompetku.ui.theme.*
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-// ── Fan item spec (mirrors ARCH_ITEMS from JSX) ───────────────────────────────
+// ── Fan item spec ─────────────────────────────────────────────────────────────
 private data class FanItem(
-    val id:    NavTab?,         // null → quickAdd action
-    val dxDp:  Float,           // horizontal offset from FAB center (dp)
-    val dyDp:  Float,           // vertical offset from FAB center (dp, negative = up)
+    val id:    NavTab?,
+    val dxDp:  Float,
+    val dyDp:  Float,
     val color: Color,
     val label: String,
-    val isAdd: Boolean = false, // the "Catat+" primary action button
+    val isAdd: Boolean = false,
     val isTransfer: Boolean = false,
     val delayMs: Int   = 0,
 )
 
 private val FAB_ITEMS = listOf(
-    // Ordered by open delay (ascending) for stagger — MUST match JSX exactly
     FanItem(id = null,                dxDp =   0f, dyDp =  -96f, color = GreenPrimary, label = "Catat",    isAdd = true,  delayMs = 0),
-    FanItem(id = NavTab.Transactions, dxDp = -112f, dyDp = -112f, color = BlueAccent,  label = "Transaksi", delayMs = 35),
-    FanItem(id = NavTab.Accounts,     dxDp =   0f, dyDp = -180f, color = GreenPrimary, label = "Akun",     delayMs = 70),
-    FanItem(id = NavTab.Analytics,    dxDp = 112f, dyDp = -112f, color = PurpleAccent, label = "Analisis", delayMs = 105),
+    FanItem(id = NavTab.Transactions, dxDp = -112f, dyDp = -112f, color = BlueAccent,  label = "Transaksi", delayMs = 30),
+    FanItem(id = NavTab.Accounts,     dxDp =   0f, dyDp = -180f, color = GreenPrimary, label = "Akun",     delayMs = 60),
+    FanItem(id = NavTab.Analytics,    dxDp = 112f, dyDp = -112f, color = PurpleAccent, label = "Analisis", delayMs = 90),
 )
 
-// ── FanNav composable ─────────────────────────────────────────────────────────
-/**
- * Renders:
- *  1. Bottom navigation bar (Beranda | [gap] | Profil)
- *  2. Floating FAB centered above the gap (pulse animation when closed)
- *  3. Backdrop overlay (white 70% + blur) when fan is open
- *  4. 4 fan action buttons with spring stagger animation
- *
- * @param currentTab    currently active tab
- * @param onTabChange   called when a nav tab is selected
- * @param onQuickAdd    called when the "Catat" FAB sub-button is tapped
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// iOS-like spring presets
+// ─────────────────────────────────────────────────────────────────────────────
+private val IOS_SPRING_OPEN  = spring<Float>(dampingRatio = 0.62f, stiffness = 450f)
+private val IOS_SPRING_FAB   = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)
+private val CLOSE_TWEEN      = { delayMs: Int -> tween<Float>(durationMillis = 180, easing = FastOutSlowInEasing, delayMillis = delayMs) }
+
 @Composable
 fun FanNav(
     currentTab:  NavTab,
@@ -70,65 +64,73 @@ fun FanNav(
     onTransfer:  () -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    // ── Pulse animation for FAB — only runs when fan is CLOSED ─────────────────
-    // Using key(open) so the animation resets cleanly when fan opens/closes
-    val infiniteTransition = rememberInfiniteTransition(label = "fabPulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue   = if (open) 0f else 0.50f,
-        targetValue    = 0f,
-        animationSpec  = infiniteRepeatable(
-            animation  = tween(2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "pulseAlpha",
-    )
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue  = if (open) 1f else 1f,
-        targetValue   = if (open) 1f else 1.65f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "pulseScale",
-    )
+    // ── Pulse: use Animatable so we can STOP it when fan opens ───────────────
+    // When open → instantly set to 0, stop looping
+    // When closed → loop pulse
+    val pulseAlpha = remember { Animatable(0f) }
+    val pulseScale = remember { Animatable(1f) }
+
+    LaunchedEffect(open) {
+        if (open) {
+            pulseAlpha.snapTo(0f)
+            pulseScale.snapTo(1f)
+        } else {
+            // Infinite pulse loop
+            while (true) {
+                pulseAlpha.snapTo(0.50f)
+                pulseScale.snapTo(1f)
+                launch { pulseAlpha.animateTo(0f, tween(2200, easing = FastOutSlowInEasing)) }
+                pulseScale.animateTo(1.65f, tween(2200, easing = FastOutSlowInEasing))
+            }
+        }
+    }
 
     // ── FAB icon cross-fade ───────────────────────────────────────────────────
-    // iOS-like spring: high stiffness, low damping = snappy with slight overshoot
     val fabIconAlpha by animateFloatAsState(
         targetValue   = if (open) 0f else 1f,
-        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        animationSpec = tween(160, easing = FastOutSlowInEasing),
         label         = "fabLogoAlpha",
     )
     val fabLogoScale by animateFloatAsState(
-        targetValue   = if (open) 0.4f else 1f,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
+        targetValue   = if (open) 0.35f else 1f,
+        animationSpec = IOS_SPRING_FAB,
         label         = "fabLogoScale",
     )
     val fabXAlpha by animateFloatAsState(
         targetValue   = if (open) 1f else 0f,
-        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        animationSpec = tween(160, easing = FastOutSlowInEasing),
         label         = "fabXAlpha",
     )
     val fabXScale by animateFloatAsState(
-        targetValue   = if (open) 1f else 0.4f,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow),
+        targetValue   = if (open) 1f else 0.35f,
+        animationSpec = IOS_SPRING_FAB,
         label         = "fabXScale",
     )
 
-    // ── FAB background color ──────────────────────────────────────────────────
+    // ── Backdrop alpha — smooth fade in/out ───────────────────────────────────
+    val backdropAlpha by animateFloatAsState(
+        targetValue   = if (open) 0.72f else 0f,
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label         = "backdropAlpha",
+    )
+    // Keep backdrop in composition when fading out (removes at 0 to save memory)
+    val showBackdrop = open || backdropAlpha > 0.01f
+
     val fabBrushClosed = Brush.linearGradient(colors = listOf(GreenPrimary, GreenDark))
     val fabBrushOpen   = Brush.linearGradient(colors = listOf(Color(0xFF374151), Color(0xFF1F2937)))
 
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // ── 1. Backdrop ───────────────────────────────────────────────────────
-        if (open) {
+        // ── 1. Backdrop (animated fade) ───────────────────────────────────────
+        if (showBackdrop) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(53f)
-                    .background(Color.White.copy(alpha = 0.72f))
+                    .graphicsLayer { alpha = backdropAlpha }
+                    .background(Color.White)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication        = null,
@@ -141,7 +143,7 @@ fun FanNav(
             FanItemButton(
                 item       = item,
                 open       = open,
-                closeDelay = (FAB_ITEMS.size - 1 - idx) * 35,
+                closeDelay = (FAB_ITEMS.size - 1 - idx) * 30,
                 onTap      = {
                     open = false
                     when {
@@ -162,7 +164,6 @@ fun FanNav(
                 .background(Color.White)
                 .navigationBarsPadding(),
         ) {
-            // Top border
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -170,7 +171,6 @@ fun FanNav(
                     .background(Color(0xFFF1F5F9))
                     .align(Alignment.TopCenter),
             )
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -178,29 +178,20 @@ fun FanNav(
                 horizontalArrangement = Arrangement.SpaceAround,
                 verticalAlignment     = Alignment.CenterVertically,
             ) {
-                // Beranda
                 NavTabButton(
-                    label     = "Beranda",
-                    icon      = { tint ->
-                        Icon(PhosphorIcons.Regular.House, contentDescription = "Beranda", tint = tint, modifier = Modifier.size(24.dp))
-                    },
-                    active    = currentTab == NavTab.Home,
-                    onClick   = { onTabChange(NavTab.Home); open = false },
-                    modifier  = Modifier.weight(1f),
+                    label   = "Beranda",
+                    icon    = { tint -> Icon(PhosphorIcons.Regular.House, null, tint = tint, modifier = Modifier.size(24.dp)) },
+                    active  = currentTab == NavTab.Home,
+                    onClick = { onTabChange(NavTab.Home); open = false },
+                    modifier = Modifier.weight(1f),
                 )
-
-                // Center spacer (FAB lives here)
                 Spacer(modifier = Modifier.width(80.dp))
-
-                // Profil
                 NavTabButton(
-                    label  = "Profil",
-                    icon   = { tint ->
-                        Icon(PhosphorIcons.Regular.UserCircle, contentDescription = "Profil", tint = tint, modifier = Modifier.size(24.dp))
-                    },
-                    active    = currentTab == NavTab.Profile,
-                    onClick   = { onTabChange(NavTab.Profile); open = false },
-                    modifier  = Modifier.weight(1f),
+                    label   = "Profil",
+                    icon    = { tint -> Icon(PhosphorIcons.Regular.UserCircle, null, tint = tint, modifier = Modifier.size(24.dp)) },
+                    active  = currentTab == NavTab.Profile,
+                    onClick = { onTabChange(NavTab.Profile); open = false },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -214,20 +205,18 @@ fun FanNav(
                 .navigationBarsPadding()
                 .padding(bottom = 22.dp),
         ) {
-            // Pulse ring (only when closed)
-            if (!open) {
-                Box(
-                    modifier = Modifier
-                        .size(70.dp)
-                        .graphicsLayer {
-                            scaleX = pulseScale
-                            scaleY = pulseScale
-                            alpha  = pulseAlpha
-                        }
-                        .clip(CircleShape)
-                        .background(GreenPrimary),
-                )
-            }
+            // Pulse ring — graphicsLayer reads Animatable value without recomposition
+            Box(
+                modifier = Modifier
+                    .size(70.dp)
+                    .graphicsLayer {
+                        scaleX = pulseScale.value
+                        scaleY = pulseScale.value
+                        alpha  = pulseAlpha.value
+                    }
+                    .clip(CircleShape)
+                    .background(GreenPrimary),
+            )
 
             // FAB body
             Box(
@@ -237,41 +226,27 @@ fun FanNav(
                     .shadow(elevation = if (open) 12.dp else 8.dp, shape = CircleShape)
                     .clip(CircleShape)
                     .background(brush = if (open) fabBrushOpen else fabBrushClosed)
-                    .then(
-                        // White border via outer padding trick
-                        Modifier.padding(0.dp)
-                    )
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication        = null,
                     ) { open = !open },
             ) {
-                // White border ring
-                Box(
-                    modifier = Modifier
-                        .size(70.dp)
-                        .clip(CircleShape)
-                        .background(Color.Transparent),
-                )
-
-                // Logo icon (shown when closed)
+                // Logo icon (closed state)
                 DompetKuLogo(
                     size  = 32.dp,
                     color = Color.White,
                     modifier = Modifier.graphicsLayer {
-                        alpha  = fabIconAlpha
-                        scaleX = fabLogoScale
-                        scaleY = fabLogoScale
-                        rotationZ = if (open) 45f else 0f
+                        alpha     = fabIconAlpha
+                        scaleX    = fabLogoScale
+                        scaleY    = fabLogoScale
                     },
                 )
-
-                // X icon (shown when open)
+                // X icon (open state)
                 Icon(
-                    imageVector         = PhosphorIcons.Regular.X,
-                    contentDescription  = "Tutup",
-                    tint                = Color.White,
-                    modifier            = Modifier
+                    imageVector        = PhosphorIcons.Regular.X,
+                    contentDescription = "Tutup",
+                    tint               = Color.White,
+                    modifier           = Modifier
                         .size(28.dp)
                         .graphicsLayer {
                             alpha  = fabXAlpha
@@ -279,19 +254,6 @@ fun FanNav(
                             scaleY = fabXScale
                         },
                 )
-            }
-
-            // White border overlay ring (3.5dp)
-            Box(
-                modifier = Modifier
-                    .size(70.dp + 7.dp) // 70 + 2×3.5 border
-                    .clip(CircleShape)
-                    .background(Color.Transparent)
-                    .padding(3.5.dp)
-                    .clip(CircleShape)
-                    .background(Color.Transparent),
-            ) {
-                // This creates the white ring effect via a Box with border
             }
         }
     }
@@ -307,39 +269,29 @@ private fun BoxScope.FanItemButton(
 ) {
     val density = LocalDensity.current
 
-    // Open: iOS spring (snappy, slight overshoot like UIKit spring)
-    // Close: fast ease-out with stagger
-    val animSpec: FiniteAnimationSpec<Float> = if (open)
-        spring(dampingRatio = 0.58f, stiffness = 380f)
+    val posSpec: FiniteAnimationSpec<Float> = if (open)
+        spring(dampingRatio = 0.62f, stiffness = 450f)
     else
-        tween(durationMillis = 200, easing = FastOutSlowInEasing, delayMillis = closeDelay)
+        tween(durationMillis = 180, easing = FastOutSlowInEasing, delayMillis = closeDelay)
 
-    val targetOffsetX = if (open) item.dxDp else 0f
-    val targetOffsetY = if (open) item.dyDp else 0f
-    val targetAlpha   = if (open) 1f else 0f
+    val alphaSpec: FiniteAnimationSpec<Float> = if (open)
+        tween(durationMillis = 200, delayMillis = item.delayMs, easing = FastOutSlowInEasing)
+    else
+        tween(durationMillis = 160, delayMillis = closeDelay, easing = FastOutSlowInEasing)
 
-    val offsetX by animateFloatAsState(targetOffsetX, animSpec, label = "fanX_${item.label}")
-    val offsetY by animateFloatAsState(targetOffsetY, animSpec, label = "fanY_${item.label}")
-    val alpha   by animateFloatAsState(
-        targetValue   = targetAlpha,
+    val offsetX by animateFloatAsState(if (open) item.dxDp else 0f, posSpec,   label = "fanX_${item.label}")
+    val offsetY by animateFloatAsState(if (open) item.dyDp else 0f, posSpec,   label = "fanY_${item.label}")
+    val alpha   by animateFloatAsState(if (open) 1f else 0f,         alphaSpec, label = "fanA_${item.label}")
+    val labelAlpha by animateFloatAsState(
+        targetValue   = if (open) 1f else 0f,
         animationSpec = if (open)
-            tween(durationMillis = 220, delayMillis = item.delayMs)
+            tween(durationMillis = 180, delayMillis = item.delayMs + 60, easing = FastOutSlowInEasing)
         else
-            tween(durationMillis = 180, delayMillis = closeDelay),
-        label = "fanAlpha_${item.label}",
+            tween(durationMillis = 140, delayMillis = closeDelay, easing = FastOutSlowInEasing),
+        label = "fanLA_${item.label}",
     )
 
     val btnSize = if (item.isAdd) 58.dp else 56.dp
-
-    // Label pill alpha: slightly delayed behind the button
-    val labelAlpha by animateFloatAsState(
-        targetValue   = targetAlpha,
-        animationSpec = if (open)
-            tween(durationMillis = 200, delayMillis = item.delayMs + 80)
-        else
-            tween(durationMillis = 150, delayMillis = closeDelay),
-        label = "fanLabelAlpha_${item.label}",
-    )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -348,24 +300,19 @@ private fun BoxScope.FanItemButton(
             .align(Alignment.BottomCenter)
             .zIndex(56f)
             .navigationBarsPadding()
-            .padding(bottom = 22.dp)               // same bottom as FAB
-            .offset(
-                x = with(density) { offsetX.dp },
-                y = with(density) { offsetY.dp },
-            )
-            .graphicsLayer { this.alpha = alpha }
-            .then(if (!open) Modifier.clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication        = null,
-                onClick           = {},
-            ) else Modifier),
+            .padding(bottom = 22.dp)
+            .graphicsLayer {
+                translationX = with(density) { offsetX.dp.toPx() }
+                translationY = with(density) { offsetY.dp.toPx() }
+                this.alpha   = alpha
+            },
     ) {
         // Label pill
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color.White)
                 .shadow(elevation = 3.dp, shape = RoundedCornerShape(8.dp))
+                .background(Color.White)
                 .graphicsLayer { this.alpha = labelAlpha }
                 .padding(horizontal = 10.dp, vertical = 4.dp),
         ) {
@@ -377,16 +324,16 @@ private fun BoxScope.FanItemButton(
             )
         }
 
-        // Circle button
+        // Circle button — only clickable when open
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(btnSize)
                 .shadow(
-                    elevation = if (item.isAdd) 10.dp else 6.dp,
-                    shape     = CircleShape,
-                    ambientColor  = item.color.copy(alpha = 0.33f),
-                    spotColor     = item.color.copy(alpha = 0.33f),
+                    elevation    = if (item.isAdd) 10.dp else 6.dp,
+                    shape        = CircleShape,
+                    ambientColor = item.color.copy(alpha = 0.3f),
+                    spotColor    = item.color.copy(alpha = 0.3f),
                 )
                 .clip(CircleShape)
                 .background(
@@ -395,33 +342,13 @@ private fun BoxScope.FanItemButton(
                     else
                         Brush.linearGradient(listOf(Color.White, Color.White))
                 )
-                .clickable(onClick = onTap),
+                .then(if (open) Modifier.clickable(onClick = onTap) else Modifier),
         ) {
             when {
-                item.isAdd  -> Icon(
-                    PhosphorIcons.Regular.Plus,
-                    contentDescription = "Catat",
-                    tint   = Color.White,
-                    modifier = Modifier.size(22.dp),
-                )
-                item.id == NavTab.Transactions -> Icon(
-                    PhosphorIcons.Regular.ListBullets,
-                    contentDescription = "Transaksi",
-                    tint   = BlueAccent,
-                    modifier = Modifier.size(22.dp),
-                )
-                item.id == NavTab.Accounts -> Icon(
-                    PhosphorIcons.Regular.Wallet,
-                    contentDescription = "Akun",
-                    tint   = GreenPrimary,
-                    modifier = Modifier.size(22.dp),
-                )
-                item.id == NavTab.Analytics -> Icon(
-                    PhosphorIcons.Regular.ChartPie,
-                    contentDescription = "Analisis",
-                    tint   = PurpleAccent,
-                    modifier = Modifier.size(22.dp),
-                )
+                item.isAdd -> Icon(PhosphorIcons.Regular.Plus, "Catat", tint = Color.White, modifier = Modifier.size(22.dp))
+                item.id == NavTab.Transactions -> Icon(PhosphorIcons.Regular.ListBullets, "Transaksi", tint = BlueAccent,   modifier = Modifier.size(22.dp))
+                item.id == NavTab.Accounts     -> Icon(PhosphorIcons.Regular.Wallet,      "Akun",      tint = GreenPrimary, modifier = Modifier.size(22.dp))
+                item.id == NavTab.Analytics    -> Icon(PhosphorIcons.Regular.ChartPie,    "Analisis",  tint = PurpleAccent, modifier = Modifier.size(22.dp))
             }
         }
     }
@@ -436,7 +363,11 @@ private fun NavTabButton(
     onClick:  () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val tint = if (active) GreenPrimary else TextLight
+    val tint by animateColorAsState(
+        targetValue   = if (active) GreenPrimary else TextLight,
+        animationSpec = tween(200),
+        label         = "navTint_$label",
+    )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -449,7 +380,6 @@ private fun NavTabButton(
             )
             .padding(vertical = 4.dp),
     ) {
-        // Active indicator strip (3dp, sits above icon)
         Box(
             modifier = Modifier
                 .width(28.dp)
@@ -457,9 +387,7 @@ private fun NavTabButton(
                 .clip(RoundedCornerShape(bottomStart = 3.dp, bottomEnd = 3.dp))
                 .background(if (active) GreenPrimary else Color.Transparent),
         )
-
         icon(tint)
-
         Text(
             text       = label,
             fontSize   = 11.sp,

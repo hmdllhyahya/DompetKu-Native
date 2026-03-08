@@ -1,19 +1,18 @@
 package com.dompetku
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.fragment.app.FragmentActivity
 import com.dompetku.ui.RootViewModel
 import com.dompetku.ui.navigation.DompetKuNavHost
 import com.dompetku.ui.theme.DompetKuTheme
 import dagger.hilt.android.AndroidEntryPoint
-import com.dompetku.R
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private val rootViewModel: RootViewModel by viewModels()
 
@@ -28,6 +27,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Prevent screenshots and app-switcher previews from exposing financial data
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContent {
             DompetKuTheme {
                 DompetKuNavHost(rootViewModel = rootViewModel)

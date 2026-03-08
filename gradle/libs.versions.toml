@@ -21,6 +21,7 @@ sods                    = "1.6.7"
 gson                    = "2.10.1"
 material 		        = "1.13.0"
 ksp                     = "2.0.21-1.0.28"
+security-crypto         = "1.1.0-alpha06"
 
 [libraries]
 compose-bom             = { group = "androidx.compose",          name = "compose-bom",              version.ref = "composeBom" }
@@ -59,6 +60,7 @@ poi-ooxml               = { group = "org.apache.poi",            name = "poi-oox
 opencsv                 = { group = "com.opencsv",               name = "opencsv",                  version.ref = "opencsv" }
 sods                    = { group = "com.github.miachm.sods",    name = "SODS",                     version.ref = "sods" }
 gson                    = { group = "com.google.code.gson",      name = "gson",                     version.ref = "gson" }
+security-crypto         = { group = "androidx.security",         name = "security-crypto",          version.ref = "security-crypto" }
 
 [plugins]
 android-application     = { id = "com.android.application",     version.ref = "agp" }

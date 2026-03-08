@@ -32,6 +32,15 @@ import com.dompetku.ui.theme.*
 import com.dompetku.util.BrandDetector
 import com.dompetku.util.CurrencyFormatter
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.*
 
 // ── Account type items with icons ─────────────────────────────────────────────
 private data class AccTypeItem(val type: AccountType, val label: String, val icon: ImageVector)
@@ -84,6 +93,7 @@ fun AccountFormSheet(
     var gradStart      by remember { mutableStateOf(if (initial != null) Color(initial.gradientStart.toInt()) else GreenPrimary) }
     var gradEnd        by remember { mutableStateOf(if (initial != null) Color(initial.gradientEnd.toInt())   else GreenDark) }
     var showGradPicker by remember { mutableStateOf(false) }
+    var editingStart   by remember { mutableStateOf(true) }
 
     val brandInfo = remember(name) { BrandDetector.detect(name) }
     LaunchedEffect(brandInfo) {
@@ -288,20 +298,16 @@ fun AccountFormSheet(
             CardPreview(name = name, last4 = last4, accType = accType, gradStart = gradStart, gradEnd = gradEnd)
 
             if (showGradPicker) {
-                Text("PRESET GRADIEN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.5.sp, modifier = Modifier.padding(bottom = 6.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
-                    itemsIndexed(GRADIENT_PRESETS) { _, pair ->
-                        val active = gradStart == pair.first && gradEnd == pair.second
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(Brush.linearGradient(listOf(pair.first, pair.second)))
-                                .then(if (active) Modifier.border(2.dp, GreenPrimary, RoundedCornerShape(9.dp)) else Modifier)
-                                .clickable { gradStart = pair.first; gradEnd = pair.second },
-                        )
-                    }
-                }
+                ColorPickerPanel(
+                    gradStart    = gradStart,
+                    gradEnd      = gradEnd,
+                    editingStart = editingStart,
+                    onSelectStart = { editingStart = true },
+                    onSelectEnd   = { editingStart = false },
+                    onColorChange = { c -> if (editingStart) gradStart = c else gradEnd = c },
+                    presets       = GRADIENT_PRESETS,
+                    onPresetClick = { s, e -> gradStart = s; gradEnd = e },
+                )
             }
 
             // ── Balance ───────────────────────────────────────────────────────
@@ -462,5 +468,313 @@ private fun FormField(label: String, content: @Composable () -> Unit) {
     ) {
         Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 3.dp))
         content()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLOR WHEEL PICKER COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun ColorPickerPanel(
+    gradStart:    Color,
+    gradEnd:      Color,
+    editingStart: Boolean,
+    onSelectStart: () -> Unit,
+    onSelectEnd:   () -> Unit,
+    onColorChange: (Color) -> Unit,
+    presets:       List<Pair<Color, Color>>,
+    onPresetClick: (Color, Color) -> Unit,
+) {
+    val activeColor = if (editingStart) gradStart else gradEnd
+
+    // Sync brightness from the active color whenever we switch which color we're editing
+    var brightness by remember(editingStart) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(activeColor.toArgb(), hsv)
+        mutableStateOf(hsv[2])
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardWhite)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(bottom = 4.dp),
+    ) {
+        // ── Which gradient stop to edit ───────────────────────────────────────
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        ) {
+            GradColorTab(
+                label   = "Warna Mulai",
+                color   = gradStart,
+                active  = editingStart,
+                onClick = onSelectStart,
+                modifier = Modifier.weight(1f),
+            )
+            GradColorTab(
+                label   = "Warna Akhir",
+                color   = gradEnd,
+                active  = !editingStart,
+                onClick = onSelectEnd,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        // ── Color wheel ───────────────────────────────────────────────────────
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        ) {
+            ColorWheel(
+                color      = activeColor,
+                brightness = brightness,
+                onColorChange = { newColor ->
+                    // Keep brightness from slider, update hue+sat
+                    onColorChange(newColor)
+                },
+                modifier = Modifier.size(220.dp),
+            )
+        }
+
+        // ── Brightness slider ─────────────────────────────────────────────────
+        Text(
+            "KECERAHAN",
+            fontSize     = 10.sp, fontWeight = FontWeight.Bold,
+            color        = TextLight, letterSpacing = 0.5.sp,
+            modifier     = Modifier.padding(bottom = 6.dp),
+        )
+        BrightnessSlider(
+            color      = activeColor,
+            brightness = brightness,
+            onBrightnessChange = { b ->
+                brightness = b
+                val hsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(activeColor.toArgb(), hsv)
+                hsv[2] = b
+                onColorChange(Color(android.graphics.Color.HSVToColor(hsv)))
+            },
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // ── Quick presets ─────────────────────────────────────────────────────
+        Text(
+            "PRESET CEPAT",
+            fontSize     = 10.sp, fontWeight = FontWeight.Bold,
+            color        = TextLight, letterSpacing = 0.5.sp,
+            modifier     = Modifier.padding(bottom = 6.dp),
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier              = Modifier.padding(bottom = 4.dp),
+        ) {
+            itemsIndexed(presets) { _, pair ->
+                val active = gradStart == pair.first && gradEnd == pair.second
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(Brush.linearGradient(listOf(pair.first, pair.second)))
+                        .then(if (active) Modifier.border(2.dp, Color.White, RoundedCornerShape(9.dp)) else Modifier)
+                        .clickable { onPresetClick(pair.first, pair.second) },
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+// ── Color wheel (HSV circular picker) ────────────────────────────────────────
+@Composable
+private fun ColorWheel(
+    color:         Color,
+    brightness:    Float,
+    onColorChange: (Color) -> Unit,
+    modifier:      Modifier = Modifier,
+) {
+    val hsv = remember(color) {
+        FloatArray(3).also { android.graphics.Color.colorToHSV(color.toArgb(), it) }
+    }
+
+    var radiusPx by remember { mutableStateOf(0f) }
+
+    fun updateFromOffset(offset: androidx.compose.ui.geometry.Offset) {
+        if (radiusPx == 0f) return
+        val dx  = offset.x - radiusPx
+        val dy  = offset.y - radiusPx
+        val dist = sqrt(dx * dx + dy * dy)
+        if (dist <= radiusPx) {
+            val hue = ((Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())) + 360.0) % 360.0).toFloat()
+            val sat = (dist / radiusPx).coerceIn(0f, 1f)
+            onColorChange(Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, brightness))))
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .onSizeChanged { radiusPx = it.width / 2f }
+            .pointerInput(brightness) {
+                detectTapGestures { offset -> updateFromOffset(offset) }
+            }
+            .pointerInput(brightness) {
+                detectDragGestures(
+                    onDragStart = { offset -> updateFromOffset(offset) },
+                    onDrag      = { change, _ -> updateFromOffset(change.position) },
+                )
+            },
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val radius = size.minDimension / 2f
+            val cx     = size.width  / 2f
+            val cy     = size.height / 2f
+            val center = androidx.compose.ui.geometry.Offset(cx, cy)
+
+            // 1. Hue sweep — ShaderBrush wraps android SweepGradient, no nativeCanvas needed
+            val hueColors = IntArray(361) { i ->
+                android.graphics.Color.HSVToColor(floatArrayOf(i.toFloat(), 1f, 1f))
+            }
+            drawCircle(
+                brush  = ShaderBrush(android.graphics.SweepGradient(cx, cy, hueColors, null)),
+                radius = radius,
+                center = center,
+            )
+
+            // 2. Saturation radial overlay (white center → transparent rim)
+            drawCircle(
+                brush = ShaderBrush(
+                    android.graphics.RadialGradient(
+                        cx, cy, radius,
+                        intArrayOf(android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT),
+                        null,
+                        android.graphics.Shader.TileMode.CLAMP,
+                    )
+                ),
+                radius = radius,
+                center = center,
+            )
+
+            // 3. Brightness overlay (black with varying alpha)
+            val brightAlpha = ((1f - brightness) * 255).toInt().coerceIn(0, 255)
+            if (brightAlpha > 0) {
+                drawCircle(
+                    color  = Color.Black.copy(alpha = brightAlpha / 255f),
+                    radius = radius,
+                    center = center,
+                )
+            }
+
+            // 4. Selector dot — position from current HSV
+            val selectorAngle = Math.toRadians(hsv[0].toDouble())
+            val selectorDist  = hsv[1] * radius
+            val sx = (cx + cos(selectorAngle) * selectorDist).toFloat()
+            val sy = (cy + sin(selectorAngle) * selectorDist).toFloat()
+            val dotCenter = androidx.compose.ui.geometry.Offset(sx, sy)
+
+            drawCircle(Color.White,  radius = 11.dp.toPx(), center = dotCenter)
+            drawCircle(color,        radius =  8.dp.toPx(), center = dotCenter)
+            drawCircle(
+                color  = Color.Black.copy(alpha = 0.15f),
+                radius = 11.dp.toPx(),
+                center = dotCenter,
+                style  = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()),
+            )
+        }
+    }
+}
+
+// ── Brightness slider ─────────────────────────────────────────────────────────
+@Composable
+private fun BrightnessSlider(
+    color:              Color,
+    brightness:         Float,
+    onBrightnessChange: (Float) -> Unit,
+) {
+    var widthPx by remember { mutableStateOf(0) }
+
+    // Full-bright version of the color for the gradient end stop
+    val fullColor = remember(color) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+        hsv[2] = 1f
+        Color(android.graphics.Color.HSVToColor(hsv))
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .onSizeChanged { widthPx = it.width }
+            .background(Brush.horizontalGradient(listOf(Color.Black, fullColor)))
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    onBrightnessChange((offset.x / widthPx).coerceIn(0f, 1f))
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        onBrightnessChange((offset.x / widthPx).coerceIn(0f, 1f))
+                    },
+                    onDrag = { change, _ ->
+                        onBrightnessChange((change.position.x / widthPx).coerceIn(0f, 1f))
+                    },
+                )
+            },
+    ) {
+        if (widthPx > 0) {
+            val thumbX = (brightness * widthPx).coerceIn(14f, widthPx - 14f)
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(thumbX.toInt() - 14, 0) }
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .border(2.dp, Color(0xFFDDE0E4), CircleShape),
+            )
+        }
+    }
+}
+
+// ── Gradient color tab (Warna Mulai / Warna Akhir toggle) ─────────────────────
+@Composable
+private fun GradColorTab(
+    label:    String,
+    color:    Color,
+    active:   Boolean,
+    onClick:  () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) GreenLight else Color(0xFFF3F4F6))
+            .border(
+                width = if (active) 1.5.dp else 1.dp,
+                color = if (active) GreenPrimary else Color(0xFFE5E7EB),
+                shape = RoundedCornerShape(10.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(color)
+                .border(1.dp, Color(0x22000000), RoundedCornerShape(5.dp)),
+        )
+        Text(
+            text       = label,
+            fontSize   = 11.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+            color      = if (active) GreenPrimary else TextMedium,
+        )
     }
 }

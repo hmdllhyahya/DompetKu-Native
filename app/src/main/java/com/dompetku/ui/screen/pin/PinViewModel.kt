@@ -30,15 +30,15 @@ class PinViewModel @Inject constructor(
 
     fun resetResult() { _result.value = PinResult.Idle }
 
-    // ── Unlock mode: verify PIN against stored hash ───────────────────────────
+    // ── Unlock mode: verify PIN, auto-upgrade hash if still legacy SHA-256 ────
     fun verifyPin(entered: String) {
         viewModelScope.launch {
             val p = prefs.appPrefsFlow.first()
-            if (PinHasher.verify(entered, p.pinHash)) {
-                _result.value = PinResult.Success
-            } else {
-                _result.value = PinResult.Error("PIN salah")
+            val ok = PinHasher.verifyAndUpgrade(entered, p.pinHash) { newHash ->
+                // Transparently upgrade stored hash to PBKDF2 on first correct login
+                prefs.setPinHash(newHash)
             }
+            _result.value = if (ok) PinResult.Success else PinResult.Error("PIN salah")
         }
     }
 
@@ -68,15 +68,21 @@ class PinViewModel @Inject constructor(
                 }
             }
             override fun onAuthenticationFailed() {
-                _result.value = PinResult.Error("Biometrik gagal/dibatalkan.")
+                // Jangan set error — user masih bisa coba ulang (jari kurang pas, dll).
+                // Error hanya di-set kalau errorCode muncul di onAuthenticationError.
             }
         }
+
+        // BIOMETRIC_STRONG | BIOMETRIC_WEAK agar kompatibel dengan lebih banyak HP.
+        // Beberapa HP hanya punya WEAK (fingerprint in-display, face unlock 2D).
+        val allowedAuth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Buka DompetKu")
             .setSubtitle("Gunakan sidik jari atau wajah")
             .setNegativeButtonText("Pakai PIN")
-            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setAllowedAuthenticators(allowedAuth)
             .build()
 
         BiometricPrompt(activity, executor, callback).authenticate(promptInfo)

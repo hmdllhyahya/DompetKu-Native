@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dompetku.BuildConfig
 import com.dompetku.domain.model.Account
 import com.dompetku.domain.model.AccountType
 import com.dompetku.util.AccountResolution
@@ -260,6 +261,13 @@ fun ProfileScreen(
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
+                    icon = PhosphorIcons.Regular.Bell, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
+                    title = "Pengingat Harian",
+                    subtitle = "Budget harian + ringkasan (5 notifikasi/hari)",
+                    rightContent = { Toggle(checked = prefs.notifEnabled, onToggle = { viewModel.setNotifEnabled(!prefs.notifEnabled) }) },
+                )
+                HorizontalDivider(color = Color(0xFFF8FAFC))
+                SectionRow(
                     icon = PhosphorIcons.Regular.Translate, iconBg = Color(0xFFDBEAFE), iconTint = Color(0xFF3B82F6),
                     title = "Bahasa",
                     rightContent = { LanguageToggle(lang = prefs.lang, onToggle = { viewModel.setLang(it) }) },
@@ -315,13 +323,25 @@ fun ProfileScreen(
                 SectionRow(
                     icon     = PhosphorIcons.Regular.Star, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
                     title    = "DompetKu",
-                    subtitle = "Versi 1.0 — Full Revision",
-                    isLast   = true,
+                    subtitle = "Versi 0.0703.5G",
+                    isLast   = false,
                     onClick  = {
                         tapCount++
                         if (tapCount >= 10) { onNavigateToMiniGame(); tapCount = 0 }
                     },
                 )
+                if (BuildConfig.DEBUG) {
+                    HorizontalDivider(color = Color(0xFFF8FAFC))
+                    SectionRow(
+                        icon     = PhosphorIcons.Regular.BellRinging,
+                        iconBg   = Color(0xFFFEE2E2),
+                        iconTint = Color(0xFFEF4444),
+                        title    = "[DEBUG] Test Notifikasi",
+                        subtitle = "Kirim semua 5 slot sekarang",
+                        isLast   = true,
+                        onClick  = { viewModel.testNotifications() },
+                    )
+                }
             }
         }
     }

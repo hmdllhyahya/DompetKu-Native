@@ -4,6 +4,7 @@
     <!-- Permissions -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+    <!-- Required for real-time exchange rates (CurrencySheet → exchangerate-api.com) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -33,7 +34,7 @@
             </intent-filter>
         </activity>
 
-        <!-- WorkManager initializer (auto-init) -->
+        <!-- WorkManager: disable auto-init, pakai HiltWorkerFactory manual init -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
@@ -42,7 +43,8 @@
             xmlns:tools="http://schemas.android.com/tools">
             <meta-data
                 android:name="androidx.work.WorkManagerInitializer"
-                android:value="androidx.startup" />
+                android:value="androidx.startup"
+                tools:node="remove" />
         </provider>
 
         <!-- FileProvider for export sharing -->

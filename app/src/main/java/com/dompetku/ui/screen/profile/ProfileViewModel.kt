@@ -1,17 +1,21 @@
 package com.dompetku.ui.screen.profile
 
+import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dompetku.data.preferences.UserPreferences
+import com.dompetku.worker.ReminderWorker
 import com.dompetku.data.repository.AccountRepository
 import com.dompetku.data.repository.TransactionRepository
 import com.dompetku.domain.model.Account
 import com.dompetku.domain.model.AccountType
+import com.dompetku.domain.model.TransactionType
 import com.dompetku.domain.model.AppPreferences
 import com.dompetku.domain.model.Transaction
 import com.dompetku.domain.model.UserProfile
 import com.dompetku.util.AccountResolution
+import com.dompetku.util.BrandDetector
 import com.dompetku.util.ExportImportManager
 import com.dompetku.util.ImportResult
 import com.dompetku.util.SmartImportResult
@@ -40,6 +44,7 @@ sealed class EiEvent {
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
+    private val app:             Application,
     private val userPrefs:       UserPreferences,
     private val transactionRepo: TransactionRepository,
     private val accountRepo:     AccountRepository,
@@ -122,25 +127,35 @@ class ProfileViewModel @Inject constructor(
                     accountRepo.deleteAll()
                 }
                 // Create new accounts first
+                // — detect AccountType & brand from name using BrandDetector
                 val createdIds = mutableMapOf<String, String>()  // rawName -> newId
                 for ((rawName, resolution) in accountResolutions) {
                     if (resolution is AccountResolution.CreateNew) {
-                        val newId = "acc_${UUID.randomUUID()}"
+                        val newId    = "acc_${UUID.randomUUID()}"
+                        val brand    = BrandDetector.detect(resolution.name)
+                        val accType  = detectAccountType(resolution.name)
+                        val gradStart = brand?.gradientStart?.value?.toLong()
+                            ?: 0xFF374151L.toInt().toLong()
+                        val gradEnd   = brand?.gradientEnd?.value?.toLong()
+                            ?: 0xFF6B7280L.toInt().toLong()
                         accountRepo.insert(
                             Account(
                                 id            = newId,
-                                type          = AccountType.other,
+                                type          = accType,
                                 name          = resolution.name,
                                 balance       = 0L,
-                                gradientStart = 0xFF374151L.toInt().toLong(),
-                                gradientEnd   = 0xFF6B7280L.toInt().toLong(),
+                                gradientStart = gradStart,
+                                gradientEnd   = gradEnd,
+                                brandKey      = brand?.key,
                                 sortOrder     = 999,
                             )
                         )
                         createdIds[rawName] = newId
                     }
                 }
-                // Insert transactions
+
+                // Insert transactions + accumulate net balance per accountId
+                val balanceDelta = mutableMapOf<String, Long>()
                 var txnCount  = 0
                 var skipCount = 0
                 for (st in result.transactions) {
@@ -162,10 +177,26 @@ class ProfileViewModel @Inject constructor(
                                 date      = st.date,
                                 time      = st.time,
                                 accountId = accountId,
+                                detected  = if (st.detected) true else null,
                             )
                         )
+                        // Accumulate balance delta:
+                        //   income   → +amount
+                        //   expense  → -amount
+                        //   transfer → -amount (accountId = from account)
+                        val delta = when (st.suggestedType) {
+                            TransactionType.income   -> +st.amount
+                            TransactionType.expense  -> -st.amount
+                            TransactionType.transfer -> -st.amount
+                        }
+                        balanceDelta[accountId] = (balanceDelta[accountId] ?: 0L) + delta
                         txnCount++
                     }
+                }
+
+                // Apply computed balance to each affected account
+                for ((accountId, delta) in balanceDelta) {
+                    accountRepo.adjustBalance(accountId, delta)
                 }
                 val accCount = accountResolutions.count {
                     it.value is AccountResolution.UseExisting ||
@@ -242,6 +273,13 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch { userPrefs.setSoundEnabled(enabled) }
     }
 
+    fun setNotifEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            userPrefs.setNotifEnabled(enabled)
+            ReminderWorker.schedule(app, enabled)
+        }
+    }
+
     fun setLang(lang: String) {
         viewModelScope.launch { userPrefs.setLang(lang) }
     }
@@ -250,6 +288,59 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             transactionRepo.deleteAll()
             accountRepo.deleteAll()
+        }
+    }
+
+    // ── Import helpers ─────────────────────────────────────────────────────────
+
+    /**
+     * Infer AccountType from account name using BrandDetector + keyword fallback.
+     * BrandDetector already knows GoPay → ewallet, BCA → bank, etc.
+     * Keyword fallback covers generic names like "Dompet", "Tabungan", dll.
+     */
+    private fun detectAccountType(name: String): AccountType {
+        val brand = BrandDetector.detect(name)
+        if (brand != null) {
+            val key = brand.key.lowercase()
+            // E-Wallet brands
+            if (key in setOf("gopay", "ovo", "dana", "shopeepay", "linkaja"))
+                return AccountType.ewallet
+            // E-Money / prepaid
+            if (key in setOf("flazz", "emoney", "brizzi", "tapcash", "jakcard"))
+                return AccountType.emoney
+            // Digital bank — still type bank
+            if (key in setOf("jenius", "jago", "jago syariah", "seabank", "blu", "flip"))
+                return AccountType.bank
+            // Regular bank
+            return AccountType.bank
+        }
+
+        // Keyword fallback for generic names
+        val lower = name.lowercase()
+        return when {
+            lower.contains("dompet") || lower.contains("cash") || lower.contains("tunai")
+                || lower.contains("wallet")                        -> AccountType.cash
+            lower.contains("tabungan") || lower.contains("saving") -> AccountType.savings
+            lower.contains("investasi") || lower.contains("invest")
+                || lower.contains("saham") || lower.contains("reksadana") -> AccountType.investment
+            lower.contains("ewallet") || lower.contains("e-wallet")
+                || lower.contains("dana") || lower.contains("pay")  -> AccountType.ewallet
+            lower.contains("emoney") || lower.contains("e-money")
+                || lower.contains("kartu")                          -> AccountType.emoney
+            lower.contains("kredit") || lower.contains("credit")    -> AccountType.credit
+            lower.contains("bank") || lower.contains("rekening")    -> AccountType.bank
+            else                                                    -> AccountType.other
+        }
+    }
+
+    /** DEBUG ONLY — fire all 5 notification slots immediately via OneTimeWorkRequest */
+    fun testNotifications() {
+        val wm = androidx.work.WorkManager.getInstance(app)
+        (0..4).forEach { slot ->
+            val req = androidx.work.OneTimeWorkRequestBuilder<ReminderWorker>()
+                .setInputData(androidx.work.workDataOf("slot" to slot))
+                .build()
+            wm.enqueue(req)
         }
     }
 }

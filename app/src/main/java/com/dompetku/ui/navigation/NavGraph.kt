@@ -1,5 +1,7 @@
 package com.dompetku.ui.navigation
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.runtime.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -88,33 +90,43 @@ fun DompetKuNavHost(
                 onTransferSaved = { txn -> txnVm.saveTransfer(txn) },
             ) { currentTab, onTabChange, onTxnClick, onOpenTransfer ->
 
-                when (currentTab) {
-                    NavTab.Home -> HomeScreen(
-                        onTabChange    = onTabChange,
-                        onTxnClick     = onTxnClick,
-                        onAccountClick = { acc ->
-                            navController.navigate(Screen.AccountDetail.createRoute(acc.id))
-                        },
-                    )
+                // Smooth iOS-like crossfade between tabs
+                AnimatedContent(
+                    targetState  = currentTab,
+                    transitionSpec = {
+                        fadeIn(tween(180, easing = FastOutSlowInEasing)) togetherWith
+                        fadeOut(tween(120, easing = FastOutSlowInEasing))
+                    },
+                    label = "tabContent",
+                ) { tab ->
+                    when (tab) {
+                        NavTab.Home -> HomeScreen(
+                            onTabChange    = onTabChange,
+                            onTxnClick     = onTxnClick,
+                            onAccountClick = { acc ->
+                                navController.navigate(Screen.AccountDetail.createRoute(acc.id))
+                            },
+                        )
 
-                    NavTab.Transactions -> TransactionsScreen(
-                        onTxnClick = onTxnClick,
-                    )
+                        NavTab.Transactions -> TransactionsScreen(
+                            onTxnClick = onTxnClick,
+                        )
 
-                    NavTab.Accounts -> AccountsScreen(
-                        onNavigateToDetail = { accountId ->
-                            navController.navigate(Screen.AccountDetail.createRoute(accountId))
-                        },
-                        onOpenTransfer = onOpenTransfer,
-                    )
+                        NavTab.Accounts -> AccountsScreen(
+                            onNavigateToDetail = { accountId ->
+                                navController.navigate(Screen.AccountDetail.createRoute(accountId))
+                            },
+                            onOpenTransfer = onOpenTransfer,
+                        )
 
-                    NavTab.Analytics -> AnalyticsScreen()
+                        NavTab.Analytics -> AnalyticsScreen()
 
-                    NavTab.Profile -> ProfileScreen(
-                        onNavigateToMiniGame = {
-                            navController.navigate(Screen.MiniGame.route)
-                        },
-                    )
+                        NavTab.Profile -> ProfileScreen(
+                            onNavigateToMiniGame = {
+                                navController.navigate(Screen.MiniGame.route)
+                            },
+                        )
+                    }
                 }
             }
         }

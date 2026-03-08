@@ -154,6 +154,24 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                 }
             }
 
+            // ── Monthly trend chart ─────────────────────────────────────────
+            if (state.monthlyTrend.isNotEmpty()) {
+                MonthlyTrendCard(
+                    data        = state.monthlyTrend,
+                    trendMonths = state.trendMonths,
+                    onToggle    = { viewModel.setTrendMonths(if (state.trendMonths == 6) 12 else 6) },
+                )
+            }
+
+            // ── Savings rate widget ───────────────────────────────────────────
+            if (state.totalIncome > 0) {
+                SavingsRateCard(
+                    savingsRate  = state.savingsRate,
+                    totalIncome  = state.totalIncome,
+                    totalExpense = state.totalExpense,
+                )
+            }
+
             // ── Lifestyle card ────────────────────────────────────────────────
             state.lifestyle?.let { ls ->
                 WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
@@ -409,5 +427,238 @@ private fun LegendDot(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(color))
         Text(label, fontSize = 10.sp, color = TextMedium)
+    }
+}
+
+// ══ Monthly Trend Card ═══════════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun MonthlyTrendCard(
+    data:        List<MonthDatum>,
+    trendMonths: Int,
+    onToggle:    () -> Unit,
+) {
+    // Animate bar growth
+    var drawn by remember { mutableStateOf(false) }
+    LaunchedEffect(data) { drawn = false; drawn = true }
+    val progress by animateFloatAsState(
+        targetValue   = if (drawn) 1f else 0f,
+        animationSpec = tween(600, easing = FastOutSlowInEasing),
+        label         = "monthTrend",
+    )
+
+    val maxVal = data.maxOfOrNull { maxOf(it.income, it.expense) }?.coerceAtLeast(1L) ?: 1L
+
+    WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        // Header row
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment     = Alignment.CenterVertically,
+            modifier              = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+        ) {
+            Text("Tren $trendMonths Bulan Terakhir", fontSize = 14.sp,
+                fontWeight = FontWeight.ExtraBold, color = TextDark)
+            // 6 / 12 toggle pill
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(Color(0xFFF1F5F9))
+                    .padding(2.dp),
+            ) {
+                listOf(6, 12).forEach { n ->
+                    val active = trendMonths == n
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(99.dp))
+                            .background(if (active) GreenPrimary else Color.Transparent)
+                            .clickable(onClick = onToggle)
+                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                    ) {
+                        Text("${n}B", fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (active) Color.White else TextLight)
+                    }
+                }
+            }
+        }
+
+        // Bar chart
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment     = Alignment.Bottom,
+            modifier              = Modifier.fillMaxWidth().height(100.dp),
+        ) {
+            data.forEach { bar ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom,
+                    modifier            = Modifier.weight(1f).fillMaxHeight(),
+                ) {
+                    val incH = (bar.income.toFloat()  / maxVal * 76 * progress).dp
+                    val expH = (bar.expense.toFloat() / maxVal * 76 * progress).dp
+                    // Income bar
+                    Box(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height(incH.coerceAtLeast(2.dp))
+                            .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                            .background(GreenPrimary.copy(alpha = 0.85f))
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    // Expense bar
+                    Box(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height(expH.coerceAtLeast(2.dp))
+                            .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                            .background(RedExpense.copy(alpha = 0.85f))
+                    )
+                    Spacer(Modifier.height(5.dp))
+                    Text(bar.label, fontSize = if (trendMonths == 12) 7.sp else 9.sp,
+                        color = TextLight, maxLines = 1)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            LegendDot(GreenPrimary, "Pemasukan")
+            LegendDot(RedExpense,   "Pengeluaran")
+        }
+    }
+}
+
+// ══ Savings Rate Card ═════════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun SavingsRateCard(
+    savingsRate:  Int,
+    totalIncome:  Long,
+    totalExpense: Long,
+) {
+    val isPositive = savingsRate >= 0
+    val clampedPct = savingsRate.coerceIn(-100, 100)
+    val sweepFraction = kotlin.math.abs(clampedPct) / 100f
+
+    // Animate gauge
+    var drawn by remember { mutableStateOf(false) }
+    LaunchedEffect(savingsRate) { drawn = false; drawn = true }
+    val animatedFraction by animateFloatAsState(
+        targetValue   = if (drawn) sweepFraction else 0f,
+        animationSpec = tween(700, easing = FastOutSlowInEasing),
+        label         = "savingsGauge",
+    )
+
+    val gaugeColor = when {
+        savingsRate >= 30 -> GreenPrimary
+        savingsRate >= 10 -> Color(0xFF84CC16)   // lime
+        savingsRate >= 0  -> Color(0xFFF59E0B)   // amber
+        else              -> RedExpense
+    }
+    val bgLabel = when {
+        savingsRate >= 30 -> "Hebat! Tabunganmu sehat 🎉" to GreenLight
+        savingsRate >= 10 -> "Lumayan, masih bisa ditingkatkan 👍" to Color(0xFFF0FDF4)
+        savingsRate >= 0  -> "Hati-hati, hampir impas ⚠️" to Color(0xFFFEF9C3)
+        else              -> "Pengeluaran melebihi pemasukan 🚨" to RedLight
+    }
+
+    WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        Text("Savings Rate", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
+            color = TextDark, modifier = Modifier.padding(bottom = 12.dp))
+
+        Row(
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Circular gauge
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(110.dp)) {
+                Canvas(modifier = Modifier.size(110.dp)) {
+                    val stroke = 10.dp.toPx()
+                    val r      = (size.minDimension - stroke) / 2f
+                    val cx     = size.width  / 2f
+                    val cy     = size.height / 2f
+                    val tl     = Offset(cx - r, cy - r)
+                    val sz     = Size(r * 2, r * 2)
+
+                    // Track (background arc)
+                    drawArc(
+                        color      = Color(0xFFF1F5F9),
+                        startAngle = 135f, sweepAngle = 270f, useCenter = false,
+                        topLeft    = tl, size = sz,
+                        style      = Stroke(width = stroke, cap = StrokeCap.Round),
+                    )
+                    // Filled arc
+                    if (animatedFraction > 0f) {
+                        drawArc(
+                            color      = gaugeColor,
+                            startAngle = 135f,
+                            sweepAngle = 270f * animatedFraction,
+                            useCenter  = false,
+                            topLeft    = tl, size = sz,
+                            style      = Stroke(width = stroke, cap = StrokeCap.Round),
+                        )
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text       = "${if (savingsRate > 0) "+" else ""}$savingsRate%",
+                        fontSize   = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        color      = gaugeColor,
+                    )
+                    Text("tabungan", fontSize = 9.sp, color = TextLight)
+                }
+            }
+
+            // Stats column
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier            = Modifier.weight(1f),
+            ) {
+                SavingsStatRow("Pemasukan",   CurrencyFormatter.compact(totalIncome),  GreenPrimary)
+                SavingsStatRow("Pengeluaran", CurrencyFormatter.compact(totalExpense),  RedExpense)
+                HorizontalDivider(color = Color(0xFFF1F5F9))
+                val savings = totalIncome - totalExpense
+                SavingsStatRow(
+                    label  = "Selisih",
+                    value  = "${if (savings >= 0) "+" else ""}${CurrencyFormatter.compact(savings)}",
+                    color  = if (savings >= 0) GreenPrimary else RedExpense,
+                    isBold = true,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Box(
+            modifier = Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(bgLabel.second)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Text(bgLabel.first, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = if (isPositive) TextDark else RedExpense)
+        }
+    }
+}
+
+@Composable
+private fun SavingsStatRow(
+    label:  String,
+    value:  String,
+    color:  Color,
+    isBold: Boolean = false,
+) {
+    Row(
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment     = Alignment.CenterVertically,
+        modifier              = Modifier.fillMaxWidth(),
+    ) {
+        Text(label, fontSize = 11.sp,
+            fontWeight = if (isBold) FontWeight.ExtraBold else FontWeight.Normal,
+            color      = TextMedium)
+        Text(value, fontSize = 11.sp,
+            fontWeight = if (isBold) FontWeight.ExtraBold else FontWeight.Bold,
+            color      = color)
     }
 }

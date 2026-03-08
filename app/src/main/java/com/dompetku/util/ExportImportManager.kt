@@ -52,6 +52,7 @@ data class SmartTransaction(
     val time:             String,
     val rawAccountName:   String,
     val wasSignFlipped:   Boolean,
+    val detected:         Boolean = false,  // true = SmartCategoryDetector matched
 )
 
 data class DetectedAccount(
@@ -80,49 +81,65 @@ class ExportImportManager @Inject constructor(
         transactions: List<Transaction>,
         accounts:     List<Account>,
     ): Uri = withContext(Dispatchers.IO) {
-        val workbook = XSSFWorkbook()
+        val workbook   = XSSFWorkbook()
+        val accountMap = accounts.associateBy { it.id }
 
         // Sheet 1 — Transaksi
+        // Kolom: Tanggal, Waktu, Jenis Transaksi, Nominal, Nama Transaksi,
+        //        Kategori, Akun, Dari Akun, Ke Akun, Biaya Admin
+        //
+        // Format nominal (accounting-style):
+        //   Pengeluaran → (14.500)     — kurung = keluar
+        //   Pemasukan   → 500.000
+        //   Transfer    → ↔ 50.000     — ↔ = perpindahan antar akun
         val txnSheet = workbook.createSheet("Transaksi")
         val txnHeaders = listOf(
-            "id", "type", "amount", "adminFee", "category",
-            "note", "date", "time", "accountId", "fromId", "toId",
+            "Tanggal", "Waktu", "Jenis Transaksi", "Nominal", "Nama Transaksi",
+            "Kategori", "Akun", "Dari Akun", "Ke Akun", "Biaya Admin",
         )
         txnSheet.createRow(0).writeHeaders(txnHeaders)
         transactions.forEachIndexed { i, t ->
+            val accName  = accountMap[t.accountId]?.name ?: ""
+            val fromName = t.fromId?.let { accountMap[it]?.name } ?: ""
+            val toName   = t.toId?.let   { accountMap[it]?.name } ?: ""
+            val typeLabel = when (t.type) {
+                TransactionType.income   -> "Pemasukan"
+                TransactionType.expense  -> "Pengeluaran"
+                TransactionType.transfer -> "Transfer"
+            }
+            val nominalStr = when (t.type) {
+                TransactionType.expense  -> "(${formatRupiah(t.amount)})"
+                TransactionType.income   -> formatRupiah(t.amount)
+                TransactionType.transfer -> "\u21D4 ${formatRupiah(t.amount)}"
+            }
             txnSheet.createRow(i + 1).apply {
-                createCell(0).setCellValue(t.id)
-                createCell(1).setCellValue(t.type.name)
-                createCell(2).setCellValue(t.amount.toDouble())
-                createCell(3).setCellValue(t.adminFee.toDouble())
-                createCell(4).setCellValue(t.category)
-                createCell(5).setCellValue(t.note)
-                createCell(6).setCellValue(t.date)
-                createCell(7).setCellValue(t.time)
-                createCell(8).setCellValue(t.accountId)
-                createCell(9).setCellValue(t.fromId ?: "")
-                createCell(10).setCellValue(t.toId ?: "")
+                createCell(0).setCellValue(t.date)                           // Tanggal
+                createCell(1).setCellValue(t.time)                           // Waktu
+                createCell(2).setCellValue(typeLabel)                        // Jenis Transaksi
+                createCell(3).setCellValue(nominalStr)                       // Nominal
+                createCell(4).setCellValue(t.note)                           // Nama Transaksi
+                createCell(5).setCellValue(t.category)                       // Kategori
+                createCell(6).setCellValue(accName)                          // Akun
+                createCell(7).setCellValue(fromName)                         // Dari Akun
+                createCell(8).setCellValue(toName)                           // Ke Akun
+                createCell(9).setCellValue(
+                    if (t.adminFee > 0) formatRupiah(t.adminFee) else ""    // Biaya Admin
+                )
             }
         }
 
         // Sheet 2 — Akun
+        // Hanya info yang berguna untuk manusia — ID internal tidak diekspor
         val accSheet = workbook.createSheet("Akun")
-        val accHeaders = listOf(
-            "id", "type", "name", "balance", "last4",
-            "brandKey", "gradientStart", "gradientEnd", "sortOrder",
-        )
+        val accHeaders = listOf("Nama", "Tipe", "Saldo", "Nomor Akhir", "Brand")
         accSheet.createRow(0).writeHeaders(accHeaders)
         accounts.forEachIndexed { i, a ->
             accSheet.createRow(i + 1).apply {
-                createCell(0).setCellValue(a.id)
+                createCell(0).setCellValue(a.name)
                 createCell(1).setCellValue(a.type.name)
-                createCell(2).setCellValue(a.name)
-                createCell(3).setCellValue(a.balance.toDouble())
-                createCell(4).setCellValue(a.last4 ?: "")
-                createCell(5).setCellValue(a.brandKey ?: "")
-                createCell(6).setCellValue(a.gradientStart.toDouble())
-                createCell(7).setCellValue(a.gradientEnd.toDouble())
-                createCell(8).setCellValue(a.sortOrder.toDouble())
+                createCell(2).setCellValue(formatRupiah(a.balance))
+                createCell(3).setCellValue(a.last4 ?: "")
+                createCell(4).setCellValue(a.brandKey ?: "")
             }
         }
 
@@ -227,6 +244,18 @@ class ExportImportManager @Inject constructor(
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Format Long ke string ribuan Indonesia tanpa prefix Rp. Contoh: 14500 → "14.500" */
+    private fun formatRupiah(amount: Long): String {
+        if (amount == 0L) return "0"
+        val s  = amount.toString()
+        val sb = StringBuilder()
+        s.reversed().forEachIndexed { i, c ->
+            if (i > 0 && i % 3 == 0) sb.append('.')
+            sb.append(c)
+        }
+        return sb.reverse().toString()
+    }
 
     private fun exportFile(): File {
         val dir = (context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
@@ -384,7 +413,8 @@ internal object SmartImportEngine {
         val debit:    Int? = null,
         val credit:   Int? = null,
         val category: Int? = null,
-        val note:     Int? = null,
+        val txnName:  Int? = null,   // Nama Transaksi — maps to Transaction.note
+        val note:     Int? = null,   // Catatan / keterangan — appended as extra info
         val account:  Int? = null,
         val txnType:  Int? = null,
         val extras:   Map<Int, String> = emptyMap(),
@@ -418,7 +448,7 @@ internal object SmartImportEngine {
         "antar rekening", "antar akun",
     )
 
-    private enum class Role { DATE, TIME, AMOUNT, DEBIT, CREDIT, CATEGORY, NOTE, ACCOUNT, TYPE }
+    private enum class Role { DATE, TIME, AMOUNT, DEBIT, CREDIT, CATEGORY, TXNNAME, NOTE, ACCOUNT, TYPE }
 
     private val ROLE_KEYWORDS: Map<Role, Set<String>> = mapOf(
         Role.DATE     to setOf("date","tanggal","tgl","waktu","datetime","created","timestamp","created_at"),
@@ -426,32 +456,42 @@ internal object SmartImportEngine {
         Role.AMOUNT   to setOf("amount","nominal","jumlah","total","nilai","uang","harga","money","sum"),
         Role.DEBIT    to setOf("debit","expense","pengeluaran","keluar","out","minus","withdraw","spent","debet"),
         Role.CREDIT   to setOf("credit","income","pemasukan","masuk","in","plus","deposit","received","kredit"),
-        Role.CATEGORY to setOf("category","kategori","kat","jenis","grup","group","sub","subcategory","tipe","class"),
-        Role.NOTE     to setOf("note","catatan","keterangan","memo","description","deskripsi","remark","ket","detail","narasi"),
+        Role.CATEGORY to setOf("category","kategori","kat","grup","group","subcategory","class"),
+        // TXNNAME: nama/judul transaksi — sebelumnya salah masuk ke NOTE
+        Role.TXNNAME  to setOf("nama transaksi","transaction name","nama","judul","title",
+                               "merchant","toko","store","payee","penerima","nama item","item","barang"),
+        // NOTE: murni catatan/keterangan — tidak termasuk nama transaksi
+        Role.NOTE     to setOf("note","catatan","keterangan","memo","description","deskripsi",
+                               "remark","ket","detail","narasi"),
         Role.ACCOUNT  to setOf("account","akun","wallet","dompet","source","from","sumber","rekening","account_name"),
         Role.TYPE     to setOf("type","tipe","direction","flow","in_out","income_expense",
                               "jenis_transaksi","income/expense","expense/income","transaction type",
-                              "jenis","kind","inout","in/out"),
+                              "jenis transaksi","jenis","kind","inout","in/out"),
     )
 
     fun detectColumns(headerRow: Row): ColumnMap {
         val n       = headerRow.lastCellNum.toInt().coerceAtLeast(0)
         val headers = (0 until n).map { i ->
-            headerRow.getCell(i)?.stringCellValue?.trim()?.lowercase() ?: ""
+            // Safely handle non-string header cells
+            val cell = headerRow.getCell(i) ?: return@map ""
+            runCatching { cell.stringCellValue?.trim()?.lowercase() ?: "" }.getOrDefault("")
         }
 
         fun scoreFor(h: String, role: Role): Float {
             if (h.isBlank()) return 0f
             val kws = ROLE_KEYWORDS[role] ?: return 0f
             if (h in kws) return 1.0f
-            if (kws.any { h.contains(it) || it.contains(h) }) return 0.7f
+            // Bug fix: only do substring check for keywords >= 3 chars.
+            // Short keywords like "in" / "out" cause false positives (e.g. nom*in*al → CREDIT)
+            if (kws.any { it.length >= 3 && (h.contains(it) || it.contains(h)) }) return 0.7f
             if (h.split(Regex("[_\\s\\-/]+")).any { it in kws }) return 0.6f
             return 0f
         }
 
         val assigned = mutableMapOf<Role, Int>()
         val claimed  = mutableSetOf<Int>()
-        val priority = listOf(Role.DATE, Role.DEBIT, Role.CREDIT, Role.AMOUNT,
+        // TXNNAME sebelum NOTE agar "Nama Transaksi" tidak salah diklaim sebagai catatan
+        val priority = listOf(Role.DATE, Role.TXNNAME, Role.DEBIT, Role.CREDIT, Role.AMOUNT,
                               Role.CATEGORY, Role.NOTE, Role.ACCOUNT, Role.TYPE, Role.TIME)
         for (role in priority) {
             val best = (0 until n).filter { it !in claimed }
@@ -476,6 +516,7 @@ internal object SmartImportEngine {
             debit    = if (hasDebitCredit) assigned[Role.DEBIT] else null,
             credit   = if (hasDebitCredit) assigned[Role.CREDIT] else null,
             category = assigned[Role.CATEGORY],
+            txnName  = assigned[Role.TXNNAME],
             note     = assigned[Role.NOTE],
             account  = assigned[Role.ACCOUNT],
             txnType  = assigned[Role.TYPE],
@@ -508,10 +549,11 @@ internal object SmartImportEngine {
             } else {
                 amount = rawAmt.toLong()
                 val ts = colMap.txnType?.let { row.str(it) }?.lowercase()?.trim()
+                    ?.takeIf { it != "-" && it != "—" }  // treat dash as null
                 val rawCatForType = colMap.category?.let { row.str(it) }?.lowercase()?.trim() ?: ""
                 type = when {
                     // Explicit TYPE column values
-                    ts != null && ts in setOf("expense","pengeluaran","keluar","out","debit","-","e","dr","expenses") ->
+                    ts != null && ts in setOf("expense","pengeluaran","keluar","out","debit","e","dr","expenses") ->
                         TransactionType.expense
                     ts != null && ts in setOf("income","pemasukan","masuk","in","credit","+","i","cr","incomes") ->
                         TransactionType.income
@@ -527,33 +569,74 @@ internal object SmartImportEngine {
 
         val rawDateStr  = colMap.date?.let { row.str(it) } ?: return null
         val parsedDate  = parseDate(rawDateStr) ?: return null
-        val parsedTime  = colMap.time?.let { row.str(it) }?.let { parseTime(it) } ?: "00:00"
-        val rawCategory = colMap.category?.let { row.str(it) } ?: ""
-        val rawNote     = colMap.note?.let { row.str(it) } ?: ""
-        val rawAccount  = colMap.account?.let { row.str(it) }?.ifBlank { null } ?: "Akun Impor"
+        // Extract time: prefer dedicated time column, else extract from combined datetime string
+        val parsedTime  = colMap.time?.let { row.str(it) }?.let { parseTime(it) }
+            ?: extractTimeFromDateStr(rawDateStr)
+            ?: "00:00"
+        val rawCategory = colMap.category?.let { row.str(it) }?.let { if (it == "-" || it == "—") null else it } ?: ""
+        // Nama transaksi — field utama yang menjadi Transaction.note
+        val rawTxnName  = colMap.txnName?.let { row.str(it) }?.let { if (it == "-" || it == "—") null else it } ?: ""
+        // Catatan murni — appended ke nama transaksi jika ada
+        val rawCatatan  = colMap.note?.let { row.str(it) }?.let { if (it == "-" || it == "—") null else it } ?: ""
+        val rawAccount  = colMap.account?.let { row.str(it) }
+            ?.let { if (it == "-" || it == "—") null else it }
+            ?.ifBlank { null } ?: "Akun Impor"
 
         val extraParts = colMap.extras.mapNotNull { (ci, hdr) ->
             // BUG-03 fix: skip kolom yang ada di ignore list
             if (IGNORED_HEADERS.any { hdr.lowercase().trim() == it || hdr.lowercase().trim().contains(it) })
                 return@mapNotNull null
-            row.str(ci)?.takeIf { it.isNotBlank() }?.let { v -> "[$hdr: $v]" }
+            val v = row.str(ci)?.takeIf { it.isNotBlank() && it != "-" && it != "—" } ?: return@mapNotNull null
+            "[$hdr: $v]"
         }
-        val fullNote = listOfNotNull(
-            rawNote.takeIf { it.isNotBlank() },
-            if (extraParts.isNotEmpty()) extraParts.joinToString(" ") else null,
-        ).joinToString(" ")
+
+        // Bangun note final:
+        // 1. Nama transaksi (primer)
+        // 2. Catatan murni (jika ada, dipisah —)
+        // 3. Extra fields (kolom yang tidak dikenal)
+        val fullNote = buildString {
+            if (rawTxnName.isNotBlank()) append(rawTxnName)
+            if (rawCatatan.isNotBlank()) {
+                if (isNotEmpty()) append(" — ")
+                append(rawCatatan)
+            }
+            if (extraParts.isNotEmpty()) {
+                if (isNotEmpty()) append(" ")
+                append(extraParts.joinToString(" "))
+            }
+        }
+
+        // Auto-detect kategori via SmartCategoryDetector (sama persis seperti input manual)
+        // Deteksi dijalankan terhadap nama transaksi, bukan catatan
+        val sourceForDetection = rawTxnName.ifBlank { fullNote }
+        val detectionResult    = SmartCategoryDetector.detect(sourceForDetection)
+        val mappedCategory     = mapCategory(rawCategory)
+        val finalCategory: String
+        val isDetected: Boolean
+        if (detectionResult != null) {
+            // SmartCategoryDetector menang jika:
+            // - kategori asli tidak ada (kosong / Lainnya), ATAU
+            // - confidence tinggi (≥ 0.7)
+            val useDetected = mappedCategory == "Lainnya" || detectionResult.confidence >= 0.7f
+            finalCategory = if (useDetected) detectionResult.category else mappedCategory
+            isDetected    = useDetected
+        } else {
+            finalCategory = mappedCategory
+            isDetected    = false
+        }
 
         return SmartTransaction(
             tempId           = "imp_${rowIdx}_${System.currentTimeMillis()}",
             suggestedType    = type,
             amount           = amount,
-            category         = mapCategory(rawCategory),
+            category         = finalCategory,
             originalCategory = rawCategory,
             note             = fullNote,
             date             = parsedDate,
             time             = parsedTime,
             rawAccountName   = rawAccount.trim(),
             wasSignFlipped   = wasSignFlipped,
+            detected         = isDetected,
         )
     }
 
@@ -596,6 +679,20 @@ internal object SmartImportEngine {
             }
         }
         return null
+    }
+
+    /**
+     * Try to extract a time component from a combined datetime string like
+     * "06 Mar 2026 21:25" or "2026-03-06T21:25:00".
+     * Returns null if no time is found.
+     */
+    private fun extractTimeFromDateStr(raw: String): String? {
+        // Match HH:mm anywhere in the string (but not a year like 2026)
+        val match = Regex("(?<!\\d)(\\d{1,2}):(\\d{2})(?!:\\d{2}|\\d)").find(raw) ?: return null
+        val h = match.groupValues[1].toIntOrNull() ?: return null
+        val m = match.groupValues[2].toIntOrNull() ?: return null
+        if (h > 23 || m > 59) return null
+        return String.format("%02d:%02d", h, m)
     }
 
     private fun parseTime(raw: String): String {
@@ -746,7 +843,12 @@ internal object SmartImportEngine {
 
     fun mapCategory(raw: String): String {
         if (raw.isBlank()) return "Lainnya"
-        val lc = raw.lowercase().trim()
+        // Strip emoji and leading symbols (e.g. "🍜 Food" → "food", "🚖 Transport" → "transport")
+        val cleaned = raw.replace(Regex("[\\p{So}\\p{Sm}\\p{Sc}\\p{Sk}\\p{Cs}]+"), " ")
+            .replace(Regex("[^\\p{L}\\p{Nd}\\s&/]"), " ")
+            .trim()
+        val lc = cleaned.lowercase().trim()
+        if (lc.isBlank()) return "Lainnya"
         CATEGORY_MAP[lc]?.let { return it }
         lc.split(Regex("[\\s/&_,]+")).forEach { token ->
             CATEGORY_MAP[token]?.let { return it }
@@ -809,13 +911,78 @@ internal object SmartImportEngine {
         val cell = getCell(colIdx) ?: return null
         return when (cell.cellType) {
             CellType.NUMERIC -> cell.numericCellValue
-            CellType.STRING  -> {
-                val cleaned = cell.stringCellValue
-                    .replace(Regex("[^\\d.\\-]"), "")
-                cleaned.toDoubleOrNull()
-            }
+            CellType.STRING  -> parseAmountString(cell.stringCellValue)
             CellType.FORMULA -> runCatching { cell.numericCellValue }.getOrNull()
+                ?: runCatching { parseAmountString(cell.stringCellValue) }.getOrNull()
             else -> null
         }
+    }
+
+    /**
+     * Parse amount strings robustly, handling both Indonesian format (1.500.000 = 1.5jt)
+     * and international format (1,500,000 or 1500.50).
+     *
+     * Strategy:
+     * - Count dots and commas to determine which is the decimal separator.
+     * - If there are multiple dots and no comma → dots are thousand separators (Indonesian: "14.500")
+     * - If there are multiple commas and no dot  → commas are thousand separators
+     * - If there is exactly one comma AND one dot, and dot comes last → comma is thousand sep
+     * - If there is exactly one dot and no comma, and the part after the dot has ≠ 3 digits → decimal dot
+     * - Otherwise treat last separator as decimal
+     */
+    private fun parseAmountString(raw: String): Double? {
+        val s = raw.trim()
+        // Kurung = pengeluaran/negatif: (14.500) atau (14,500)
+        val isParenNegative = s.startsWith('(') && s.endsWith(')')
+        // Tanda ⇔ atau ↔ = transfer, ambil positif
+        val withoutPrefix = s
+            .removePrefix("⇔")
+            .removePrefix("↔")
+            .removeSurrounding("(", ")")
+            .trim()
+        val cleanedForSign = withoutPrefix.trimStart('-')
+        val negative = isParenNegative || withoutPrefix.startsWith('-')
+        val (trimmed) = cleanedForSign to negative
+        // Strip currency symbols, spaces, Rp prefix
+        val stripped = trimmed
+            .replace(Regex("^[Rr][Pp]\\.?\\s*"), "")
+            .replace(Regex("[^\\d.,]"), "")
+            .trim()
+        if (stripped.isBlank()) return null
+
+        val dotCount   = stripped.count { it == '.' }
+        val commaCount = stripped.count { it == ',' }
+        val result = when {
+            dotCount == 0 && commaCount == 0 -> stripped.toLongOrNull()?.toDouble()
+            // Multiple dots, no comma → all dots are thousand separators (Indonesian "1.500.000")
+            dotCount > 1 && commaCount == 0  -> stripped.replace(".", "").toLongOrNull()?.toDouble()
+            // Multiple commas, no dot → all commas are thousand separators
+            commaCount > 1 && dotCount == 0  -> stripped.replace(",", "").toLongOrNull()?.toDouble()
+            // One dot only: if 3 digits after dot → treat as thousand separator
+            dotCount == 1 && commaCount == 0 -> {
+                val afterDot = stripped.substringAfter('.')
+                if (afterDot.length == 3) stripped.replace(".", "").toLongOrNull()?.toDouble()
+                else stripped.toDoubleOrNull()
+            }
+            // One comma only: if 3 digits after comma → treat as thousand separator
+            commaCount == 1 && dotCount == 0 -> {
+                val afterComma = stripped.substringAfter(',')
+                if (afterComma.length == 3) stripped.replace(",", "").toLongOrNull()?.toDouble()
+                else stripped.replace(',', '.').toDoubleOrNull()
+            }
+            // Both present: last one wins as decimal separator
+            else -> {
+                val lastDot   = stripped.lastIndexOf('.')
+                val lastComma = stripped.lastIndexOf(',')
+                if (lastDot > lastComma) {
+                    // dot is decimal: remove commas (thousand sep)
+                    stripped.replace(",", "").toDoubleOrNull()
+                } else {
+                    // comma is decimal: remove dots (thousand sep), replace comma with dot
+                    stripped.replace(".", "").replace(',', '.').toDoubleOrNull()
+                }
+            }
+        }
+        return if (result != null && negative) -result else result
     }
 }

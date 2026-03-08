@@ -16,6 +16,7 @@ import javax.inject.Inject
 
 data class PieDatum(val category: String, val amount: Long, val pct: Int)
 data class BarDatum(val label: String, val income: Long, val expense: Long)
+data class MonthDatum(val label: String, val income: Long, val expense: Long, val savings: Long)
 
 data class LifestyleData(
     val personaTitle: String,
@@ -51,6 +52,9 @@ data class AnalyticsUiState(
     val barData:       List<BarDatum> = emptyList(),
     val lifestyle:     LifestyleData? = null,
     val salaryInsight: SalaryInsight? = null,
+    val monthlyTrend:  List<MonthDatum> = emptyList(),
+    val savingsRate:   Int = 0,   // (income-expense)/income*100, bisa negatif
+    val trendMonths:   Int = 6,
 )
 
 @HiltViewModel
@@ -59,10 +63,11 @@ class AnalyticsViewModel @Inject constructor(
     private val userPrefs:       UserPreferences,
 ) : ViewModel() {
 
-    private val _typeFilter = MutableStateFlow("all")
-    private val _dateFilter = MutableStateFlow("month")
-    private val _customFrom = MutableStateFlow("")
-    private val _customTo   = MutableStateFlow(DateUtils.todayStr())
+    private val _typeFilter   = MutableStateFlow("all")
+    private val _dateFilter   = MutableStateFlow("month")
+    private val _customFrom   = MutableStateFlow("")
+    private val _customTo     = MutableStateFlow(DateUtils.todayStr())
+    private val _trendMonths  = MutableStateFlow(6)
 
     private val _filterState = combine(_typeFilter, _dateFilter, _customFrom, _customTo) {
         type, date, from, to -> arrayOf(type, date, from, to)
@@ -72,7 +77,8 @@ class AnalyticsViewModel @Inject constructor(
         transactionRepo.observeAll(),
         userPrefs.appPrefsFlow,
         _filterState,
-    ) { txns, prefs, filters ->
+        _trendMonths,
+    ) { txns, prefs, filters, trendMonths ->
         val typeFilter = filters[0]
         val dateFilter = filters[1]
         val customFrom = filters[2]
@@ -136,6 +142,14 @@ class AnalyticsViewModel @Inject constructor(
         val lifestyle     = computeLifestyle(list, totalExp)
         val salaryInsight = computeSalaryInsight(list, prefs.userProfile.job)
 
+        // ── Monthly trend (last N months, not affected by user filter) ────────
+        val monthlyTrend = computeMonthlyTrend(txns, trendMonths)
+
+        // ── Savings rate (based on filtered period) ───────────────────────────
+        val savingsRate = if (totalInc > 0)
+            ((totalInc - totalExp) * 100 / totalInc).toInt()
+        else 0
+
         AnalyticsUiState(
             allTxns       = txns,
             userJob       = prefs.userProfile.job,
@@ -151,6 +165,9 @@ class AnalyticsViewModel @Inject constructor(
             barData       = barData,
             lifestyle     = lifestyle,
             salaryInsight = salaryInsight,
+            monthlyTrend  = monthlyTrend,
+            savingsRate   = savingsRate,
+            trendMonths   = trendMonths,
         )
     }.flowOn(Dispatchers.Default)
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AnalyticsUiState())
@@ -159,6 +176,7 @@ class AnalyticsViewModel @Inject constructor(
     fun setDateFilter(v: String) { _dateFilter.value = v }
     fun setCustomFrom(v: String) { _customFrom.value = v }
     fun setCustomTo(v: String)   { _customTo.value   = v }
+    fun setTrendMonths(v: Int)   { _trendMonths.value = v }
 }
 
 // ── Pure computation (runs on Dispatchers.Default inside combine) ─────────────
@@ -197,6 +215,21 @@ private fun computeLifestyle(txns: List<Transaction>, totalExp: Long): Lifestyle
 }
 
 private fun String.containsAny(vararg keywords: String) = keywords.any { this.contains(it) }
+
+private val MONTH_ID = listOf("Jan","Feb","Mar","Apr","Mei","Jun","Jul","Ags","Sep","Okt","Nov","Des")
+
+private fun computeMonthlyTrend(txns: List<Transaction>, months: Int): List<MonthDatum> {
+    val today = java.time.LocalDate.now()
+    return (months - 1 downTo 0).map { offset ->
+        val month  = today.minusMonths(offset.toLong())
+        val prefix = month.toString().substring(0, 7)          // "YYYY-MM"
+        val label  = MONTH_ID[month.monthValue - 1]            // "Jan", "Feb", ...
+        val mt = txns.filter { it.date.startsWith(prefix) && it.category != "Penyesuaian Saldo" }
+        val inc = mt.filter { it.type == TransactionType.income  }.sumOf { it.amount }
+        val exp = mt.filter { it.type == TransactionType.expense }.sumOf { it.amount }
+        MonthDatum(label, inc, exp, inc - exp)
+    }
+}
 
 private fun computeSalaryInsight(txns: List<Transaction>, userJob: String): SalaryInsight? {
     val living = txns.filter { it.type == TransactionType.expense }.sumOf { it.amount }

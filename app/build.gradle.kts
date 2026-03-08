@@ -15,7 +15,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 11
-        versionName = "11.2"
+        versionName = "0.0703.5G"
     }
 
     buildTypes {
@@ -36,6 +36,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     configurations.all {
@@ -101,8 +102,10 @@ dependencies {
     // Coil
     implementation(libs.coil.compose)
 
-    // WorkManager
+    // WorkManager + Hilt integration
     implementation(libs.workmanager.ktx)
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Splash Screen
     implementation(libs.splashscreen)
@@ -117,6 +120,9 @@ dependencies {
     implementation(libs.poi.ooxml)
     implementation(libs.opencsv)
     implementation(libs.sods)
+
+    // Security (EncryptedSharedPreferences)
+    implementation(libs.security.crypto)
 
     // Gson
     implementation(libs.gson)
