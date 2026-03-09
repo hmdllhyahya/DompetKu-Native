@@ -1,0 +1,33 @@
+KITA LANJUT FASE 5C!
+
+
+
+Kamu memiliki Filesystem MCP extension yang terhubung langsung ke project di `C:\WORK\Projects\DompetKu`. Kamu bisa membaca dan mengedit file secara langsung tanpa perlu menampilkan kode ke chat.
+
+LANGKAH PERTAMA yang harus kamu lakukan sebelum apapun di fase ini: Baca file handoff ini secara penuh: `C:\WORK\Projects\DompetKu\PHASE_5C_HANDOFF.md`
+
+File tersebut berisi:
+
+* Semua yang sudah dikerjakan di Phase 5B
+
+* Bug yang belum diperbaiki beserta root cause dugaan
+
+* Fitur-fitur yang harus dikerjakan di Phase 5C beserta scope dan file terkait
+
+* Catatan arsitektur penting (jangan skip bagian ini)
+
+* Prioritas pengerjaan yang disarankan
+
+Setelah membaca handoff, langsung implementasikan Phase 5C ke filesystem secara berurutan sesuai prioritas di Section 5 dokumen tersebut. Mulai dari yang paling critical (transfer edit bug), lalu lanjut ke fitur-fitur berikutnya.
+
+Untuk setiap perubahan: edit langsung file-nya, jangan hanya tampilkan kode di chat.
+
+
+
+Efisiensi penggunaan session token pikirkan. Audit sepertinya menggunakan banyak token. Kurangi audit. Audit dilakukan hanya untuk file-file kecil KECUALI memang krusial.
+
+
+
+
+
+Cek apakah anda punya kapabilitas filesystem? Yes or No. Kalau No, IMMIDEATLY STOP. Kabari saya.

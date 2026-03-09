@@ -1,0 +1,2175 @@
+Anda terpotong. Ini yang anda kerjakan tadi sebelum terpotong. Kurangi audit, fokus lansung ke perbaikan projek:
+
+Mengidentifikasi dan melacak bug transfer saldo lintas akun
+Mengidentifikasi dan melacak bug transfer saldo lintas akun
+The user wants me to review all their feedback and implement fixes. Let me re-read the full feedback document and categorize everything, then start implementing.
+
+From the voice note transcript, here are all the issues:
+
+BUGS (fix now):
+
+Transfer balance sync broken — GoPay → Mandiri: GoPay berkurang tapi Mandiri tidak bertambah
+X button terpotong di AccountFormSheet, TransferSheet, dan semua sheet — app-wide fix
+TransactionRow di AccountDetailScreen onClick = {} kosong — tidak bisa masuk detail transaksi
+Profil card tidak proporsional (lihat screenshot) — ProfileInfoChip layout
+Carousel swipe follow finger real-time (physics drag, tidak snap langsung)
+Hide balance toggle harus ada di TransactionScreen dan AccountsScreen (bukan hanya HomeScreen)
+For Phase 5B, I need to tackle the financial prediction widget that opens a detailed popup showing expense estimates broken down by day and month, plus the occupation field in the profile editor that should accept custom text input, and making sure the education list matches what's available during onboarding.
+
+Deferring to Phase 5C are photo and file attachments in transaction forms, colored account cards in the transaction form sheet with expand animations, analytics chart toggles, smart job detection for analytics, and smart category detection.
+
+Now I'm looking at the transfer bug. The issue is in how the transaction gets created and processed—the TransferSheet is setting up the transaction with the account IDs, then the view model is calling the repository methods to record and apply the transfer. Examining the code flow...
+
+Tracing through the repository calls...
+
+Actually, I'm noticing something — when saveTransaction is called from the ViewModel, it's handling the transfer case by calling applyTransfer, which adjusts balances for both accounts. But I need to verify this is the only place transfers get processed, because if onTransferSaved is also triggering additional balance adjustments somewhere, we could be double-counting. Looking at the TransferSheet flow, it saves the transaction through saveTransfer, which records it in the repository and then applies the transfer between accounts using the fromId and toId that were set when creating the transaction. Both paths—whether a transfer is created through TransactionFormSheet or TransferSheet—end up calling the same saveTransfer method, so the logic is consistent.
+
+But examining applyTransfer more closely, I notice it's making sequential calls to adjust the source and destination account balances. There could be a race condition here—if another operation reads the account balance between the two adjustments, it might see an inconsistent state where the source account has been debited but the destination hasn't been credited yet.
+
+Let me check how the AccountsViewModel handles the transaction flow and whether the state updates are being properly observed.
+
+Show less
+Done
+Siap. Baca ulang semua feedback, lanjutkan audit. Cek AccountsViewModel dan ProfileScreen sekarang.
+
+
+Mengaudit komponen antarmuka untuk fitur penyembunyian saldo
+Mengaudit komponen antarmuka untuk fitur penyembunyian saldo
+F
+
+
+Read multiple files
+
+Result
+Now let me check the HomeScreen for the carousel and hide balance toggle, plus TransactionsScreen for the hide balance toggle.
+
+Done
+Sekarang cek HomeScreen (carousel) dan TransactionsScreen (hide balance toggle):
+
+
+Mengidentifikasi celah dan merencanakan pemeriksaan ulang menyeluruh
+Mengidentifikasi celah dan merencanakan pemeriksaan ulang menyeluruh
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+Now I have a full picture. Let me read the rest of HomeScreen to see the full MiniAccountCard.
+
+Done
+Cukup informasi untuk semua. Sekarang saya tahu root cause semua masalah. Implementasi semuanya:
+
+Summary temuan:
+
+Transfer bug — applyTransfer() logic benar, tapi ada race condition di adjustBalance(). Kedua operasi pakai getById → update secara sequential, tapi Room bisa berikan stale snapshot. Fix: pakai single transaction Room atau sequential dengan explicit delay.
+Carousel — pakai AnimatedContent + detectHorizontalDragGestures yang snap setelah threshold. Harus diganti ke draggable dengan offset real-time.
+AccountDetailScreen onClick = {} — TransactionRow tidak punya onClick handler.
+X button terpotong — header padding kurang.
+ProfileInfoChip — terlalu besar, padding berlebihan.
+Hide balance toggle — hanya di HomeScreen, perlu di TransactionsScreen dan AccountsScreen.
+Edit profil — "Lainnya" perlu free text; list EDUS kurang lengkap; ProfileInfoChip layout.
+Predictor popup — belum ada.
+Mulai implementasi:
+
+
+Mengidentifikasi bug transfer dan merencanakan delapan perbaikan kritis aplikasi
+Mengidentifikasi bug transfer dan merencanakan delapan perbaikan kritis aplikasi
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+Now I have enough context. Let me implement all the fixes. Here's my plan:
+
+FIXES:
+
+Transfer balance bug — The issue is likely a race condition in adjustBalance. Two sequential calls that both do getById → update. If Room caches the entity, the second call might read the unmodified balance. Fix: Use explicit suspend calls in sequence but with proper Room DAO.
+Actually, looking at the code more carefully:
+
+kotlin
+suspend fun adjustBalance(accountId: String, delta: Long) {
+    val acc = dao.getById(accountId) ?: return
+    dao.update(acc.copy(balance = acc.balance + delta))
+
+
+}
+
+suspend fun applyTransfer(fromId: String, toId: String, amount: Long, adminFee: Long) {
+    adjustBalance(fromId, -(amount + adminFee))
+    adjustBalance(toId, +amount)
+}
+These are sequential suspend calls on the same coroutine, so they should execute in order. The real issue is that the user confirmed GoPay's balance did decrease, which means the first adjustBalance call worked. So the problem must be elsewhere — maybe the second call isn't executing, or there's something wrong with how the transfer is being recorded.
+
+Let me look at the Transaction creation in TransferSheet to see if toId is being set correctly...
+
+Checking the saveTransfer function...
+
+Looking at the entity definitions and the toDomain mapping to see if toId is being preserved through the database layer...
+
+tracing through recordTransfer which calls insert, then toEntityFull, then toEntity — the data path looks correct. But I'm wondering if there's a double-call issue where both saveTransfer and saveTransaction are being triggered, and I need to check the MainScaffold logic to see if the transaction type routing is causing the problem. I'm realizing the issue might be in how the transfer is being routed — the user's seeing the transaction recorded in Mandiri but the balance isn't updating, which suggests applyTransfer is deducting from GoPay but not crediting the destination account. Let me trace through whether saveTransaction with the transfer type handler is somehow being called instead of the dedicated saveTransfer path, since the routing in MainScaffold should be explicit about which callback gets invoked. I'm checking the routing logic in TransactionFormSheet's onSave callback—if someone creates a transfer through that form, it correctly routes to onTransferSaved instead of the generic onTxnSaved. Now I'm tracing through saveTransfer to see if it's properly handling the toId parameter, and I notice it returns early if toId is null, which could silently fail.
+
+But the user reported that GoPay was actually debited, so toId must not be null when applyTransfer gets called. That means the problem isn't in the guard check—it's happening inside applyTransfer itself. Let me look at what adjustBalance is actually doing.
+
+Both calls in applyTransfer are sequential suspend functions, so the first update should be committed before the second read happens. Room should handle this correctly since they're running on the same coroutine. But I'm wondering if there's something else going on in saveTransfer that I'm missing. I'm wondering if the issue is that TransactionFormSheet might also handle transfer types and route them to saveTransaction instead of saveTransfer. Looking at the routing logic in MainScaffold, it should correctly direct transfers to onTransferSaved, but maybe there's a gap where transfers are being processed through the wrong handler. I could make this more robust by validating fromId and toId in saveTransfer before applying the transfer, though I need to be careful not to double-credit accounts if I add a fallback in saveTransaction.
+
+The user mentioned this was fixed before but broke again after a rebuild. The previous fix was routing transfers from TransactionFormSheet to onTransferSaved, and the current code does have that routing in place. So either something reverted, or there's a different code path being taken that bypasses the correct handler.
+
+Looking at what the user actually reported: GoPay balance decreased correctly, but Mandiri didn't receive the credit. This suggests the transfer is being saved to GoPay but not properly synced to Mandiri's account. Let me trace through what happens when a transfer is submitted — it should call onTransferSaved, which then needs to update both accounts. history ✓
+3. But Mandiri balance did NOT increase ✗
+
+This is very specific. If applyTransfer ran fully, both would be updated. If it didn't run at all, neither would change. But GoPay DID decrease. So applyTransfer ran, but only adjustBalance(fromId, ...) worked and adjustBalance(toId, ...) failed silently.
+
+The only way adjustBalance(toId, ...) fails silently is if dao.getById(toId) returns null. That means the Mandiri account doesn't exist in the DB? But the user says Mandiri IS there (it shows in account detail). Unlikely.
+
+OR: the return@launch guard in saveTransfer is triggering AFTER applyTransfer(fromId, ...) but before applyTransfer(toId, ...). But that's not possible because applyTransfer is called atomically — the return@launch guard is checked BEFORE calling applyTransfer.
+
+Actually, looking at how the arguments are evaluated — fromId is checked first with the elvis operator, then toId. If toId were null, the function would return before applyTransfer is even invoked, so neither account would change. But GoPay changed, which means applyTransfer definitely executed with valid arguments.
+
+Now I'm wondering if there's a concurrency issue where two operations are modifying the same account simultaneously. If saveTransaction and saveTransfer both run at the same time, they could both be reading stale balance data and writing back incorrect values. Or maybe two transfer operations are happening in parallel — one debits GoPay while another tries to debit it again, causing a double-debit on GoPay but only a single credit to Mandiri.
+
+Actually, let me reconsider — the user said the balance decreased once (100k), not twice, so maybe it's not a double-debit issue. They're seeing the balance in the account detail screen, which pulls from account.balance in the database. The real problem might be that applyTransfer isn't handling both the debit and credit operations atomically. I should look at making that more robust, possibly wrapping both operations in a transaction or ensuring they execute correctly together.
+
+Wait, I just spotted the actual issue. In AccountRepository, the adjustBalance method reads the account, then updates it — but these two operations aren't wrapped in a @Transaction, which means there's a race condition where the balance could be read and modified by concurrent operations. The fix is to replace this with a direct SQL UPDATE that increments the balance atomically, eliminating the time-of-check-time-of-use vulnerability.
+
+So my approach is to add an atomic incrementBalance DAO method using a direct SQL UPDATE, then refactor applyTransfer to use it instead of the current two-step process. After that, I need to tackle the carousel drag responsiveness issue.
+
+Now I'm mapping out the remaining fixes: swap the carousel animation for a proper pager with real-time drag tracking, wire up transaction row clicks to pass callbacks through the screen hierarchy, ensure all sheet headers have proper padding, adjust the ProfileInfoChip styling to match the design, add a balance visibility toggle to both transaction and accounts screens, make the "Lainnya" field accept free text input, sync the EDUS list with onboarding, and add click handling to the predictor card.
+
+Let me check what EDUS list the onboarding uses so I can keep them consistent.
+
+Show less
+Done
+Cek OnboardingScreen untuk list pendidikan yang benar:
+
+
+Mengidentifikasi sepuluh bug kritis dan merencanakan implementasi perbaikan sistematis
+Mengidentifikasi sepuluh bug kritis dan merencanakan implementasi perbaikan sistematis
+F
+
+
+Search files
+
+Result
+F
+
+
+Search files
+
+Result
+F
+
+
+Read text file
+
+Result
+Now I have everything I need. Let me implement all the fixes now.
+
+Issues to fix:
+
+Transfer balance bug — Replace adjustBalance with direct atomic SQL UPDATE in AccountDao
+Carousel real-time drag — Replace with draggable + offset tracking
+AccountDetailScreen TransactionRow onClick — Need to pass onTxnClick from NavGraph
+X button terpotong app-wide — Check and fix all sheets
+ProfileInfoChip layout — Fix proportions per screenshot
+Hide balance toggle — Add to TransactionsScreen and AccountsScreen
+Edit profil "Lainnya" → free text — Add custom job input
+EDUS list — Sync: add "Tidak Ingin Menyebutkan", change labels to match onboarding
+JOBS list — Sync with onboarding (more comprehensive list)
+Predictor popup — Add tap → bottom sheet with explanations
+A few items are deferred to the next phase: photo/file attachments, colored account cards in the transaction form, account card expansion animations, analytics chart toggle, and the smart job database feature. Starting implementation now.
+
+Show less
+Done
+Sekarang saya punya semua informasi. Implementasi semua fixes:
+
+Plan:
+
+Fix 1: Transfer race condition — pakai direct SQL UPDATE di DAO (atomic)
+Fix 2: Carousel real-time drag — ganti ke draggable dengan offset tracking
+Fix 3: AccountDetailScreen onClick = {} — wire ke onTxnClick
+Fix 4: X button padding app-wide — semua sheets
+Fix 5: ProfileInfoChip layout — fix per screenshot
+Fix 6: Hide balance toggle — tambah di TransactionsScreen & AccountsScreen
+Fix 7: Edit profil "Lainnya" → free text input
+Fix 8: EDUS & JOBS list — sync dengan onboarding
+Fix 9: Predictor popup
+Deferred 5C: Lampiran, account card berwarna di form, expand animation, analytics chart, smart job database.
+
+Mulai:
+
+
+Mengidentifikasi celah kode dan merencanakan pemeriksaan ulang menyeluruh
+Mengidentifikasi celah kode dan merencanakan pemeriksaan ulang menyeluruh
+F
+
+
+Edit file
+Request
+
+{
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\data\\local\\dao\\Daos.kt",
+  "edits": [
+    {
+      "oldText": "    @Query(\"DELETE FROM accounts WHERE id = :id\")
+    suspend fun deleteById(id: String)
+
+    @Query(\"DELETE FROM accounts\")
+    suspend fun deleteAll()
+
+    @Query(\"SELECT SUM(balance) FROM accounts\")
+    fun observeTotalBalance(): Flow<Long?>",
+      "newText": "    @Query(\"DELETE FROM accounts WHERE id = :id\")
+    suspend fun deleteById(id: String)
+
+    @Query(\"DELETE FROM accounts\")
+    suspend fun deleteAll()
+
+    @Query(\"SELECT SUM(balance) FROM accounts\")
+    fun observeTotalBalance(): Flow<Long?>
+
+    /** Atomic balance increment — avoids read-modify-write race conditions */
+    @Query(\"UPDATE accounts SET balance = balance + :delta WHERE id = :id\")
+    suspend fun incrementBalance(id: String, delta: Long)"
+    }
+  ]
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\local\dao\Daos.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\local\dao\Daos.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\local\dao\Daos.kt	modified
+@@ -83,8 +83,12 @@
+ 
+     @Query("SELECT SUM(balance) FROM accounts")
+     fun observeTotalBalance(): Flow<Long?>
+ 
++    /** Atomic balance increment — avoids read-modify-write race conditions */
++    @Query("UPDATE accounts SET balance = balance + :delta WHERE id = :id")
++    suspend fun incrementBalance(id: String, delta: Long)
++
+     /** Atomic transfer: deduct from sender, credit receiver in one SQLite transaction */
+     @Transaction
+     suspend fun applyTransferBalance(fromId: String, toId: String, debit: Long, credit: Long) {
+         val from = getById(fromId) ?: return
+```
+
+Wait, it seems there's already a @Transaction method in the DAO. Let me read the full DAO file to see what's there.
+
+Done
+Ada existing @Transaction di DAO? Baca full:
+
+
+Mengidentifikasi metode atomik dan merencanakan refaktorisasi repositori
+Mengidentifikasi metode atomik dan merencanakan refaktorisasi repositori
+F
+
+
+Read text file
+
+Result
+There's already an applyTransferBalance method using @Transaction in the DAO. But it still uses the read-modify-write pattern. I need to replace it with the atomic incrementBalance approach. Also update AccountRepository.adjustBalance and applyTransfer to use the new atomic methods.
+
+Let me now update AccountRepository to use incrementBalance and applyTransferBalance from the DAO properly.
+
+Done
+Ada applyTransferBalance di DAO tapi masih pakai read-modify-write. Fix semua — pakai incrementBalance yang truly atomic:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "    /** Atomic transfer: deduct from sender, credit receiver in one SQLite transaction */
+    @Transaction
+    suspend fun applyTransferBalance(fromId: String, toId: String, debit: Long, credit: Long) {
+        val from = getById(fromId) ?: return
+        val to   = getById(toId)   ?: return
+        update(from.copy(balance = from.balance - debit))
+        update(to.copy(balance   = to.balance   + credit))
+    }",
+      "newText": "    /** Atomic transfer via direct SQL — no read-modify-write race condition */
+    @Transaction
+    suspend fun applyTransferBalance(fromId: String, toId: String, debit: Long, credit: Long) {
+        incrementBalance(fromId, -debit)
+        incrementBalance(toId,   +credit)
+    }"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\data\\local\\dao\\Daos.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\local\dao\Daos.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\local\dao\Daos.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\local\dao\Daos.kt	modified
+@@ -87,15 +87,13 @@
+     /** Atomic balance increment — avoids read-modify-write race conditions */
+     @Query("UPDATE accounts SET balance = balance + :delta WHERE id = :id")
+     suspend fun incrementBalance(id: String, delta: Long)
+ 
+-    /** Atomic transfer: deduct from sender, credit receiver in one SQLite transaction */
++    /** Atomic transfer via direct SQL — no read-modify-write race condition */
+     @Transaction
+     suspend fun applyTransferBalance(fromId: String, toId: String, debit: Long, credit: Long) {
+-        val from = getById(fromId) ?: return
+-        val to   = getById(toId)   ?: return
+-        update(from.copy(balance = from.balance - debit))
+-        update(to.copy(balance   = to.balance   + credit))
++        incrementBalance(fromId, -debit)
++        incrementBalance(toId,   +credit)
+     }
+ }
+ 
+ // ── AttachmentDao ─────────────────────────────────────────────────────────────
+```
+
+Done
+Sekarang update AccountRepository — pakai applyTransferBalance dari DAO, dan adjustBalance pakai incrementBalance:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Edit file
+
+Result
+F
+
+
+Read text file
+
+Result
+Done
+applyTransfer sudah pakai applyTransferBalance. Hanya adjustBalance yang masih read-modify-write. Fix itu:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "    suspend fun adjustBalance(accountId: String, delta: Long) {
+        val acc = dao.getById(accountId) ?: return
+        dao.update(acc.copy(balance = acc.balance + delta))
+    }",
+      "newText": "    suspend fun adjustBalance(accountId: String, delta: Long) {
+        dao.incrementBalance(accountId, delta)
+    }"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\data\\repository\\Repositories.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\repository\Repositories.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\repository\Repositories.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\data\repository\Repositories.kt	modified
+@@ -105,10 +105,9 @@
+     suspend fun delete(id: String)             { dao.deleteById(id) }
+     suspend fun deleteAll()                    { dao.deleteAll() }
+ 
+     suspend fun adjustBalance(accountId: String, delta: Long) {
+-        val acc = dao.getById(accountId) ?: return
+-        dao.update(acc.copy(balance = acc.balance + delta))
++        dao.incrementBalance(accountId, delta)
+     }
+ 
+     suspend fun applyTransfer(fromId: String, toId: String, amount: Long, adminFee: Long) {
+         if (fromId.isBlank() || toId.isBlank() || fromId == toId) return
+```
+
+Done
+✅ Fix 1 (transfer) selesai. Sekarang Fix 2 — carousel real-time drag. Ganti AnimatedContent + detectHorizontalDragGestures dengan draggable yang follow finger:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Read text file
+
+Result
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.launch",
+      "newText": "import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.launch"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\home\\HomeScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt	modified
+@@ -3,8 +3,9 @@
+ import androidx.compose.animation.*
+ import androidx.compose.animation.core.*
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
++import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+ import androidx.compose.foundation.layout.*
+ import androidx.compose.foundation.horizontalScroll
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.shape.CircleShape
+@@ -16,9 +17,11 @@
+ import androidx.compose.foundation.gestures.rememberDraggableState
+ import androidx.compose.foundation.text.KeyboardOptions
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.layout.onSizeChanged
++import androidx.compose.ui.platform.LocalDensity
+ import kotlinx.coroutines.launch
+ import androidx.compose.material3.*
+ import androidx.compose.runtime.*
+ import androidx.compose.ui.Alignment
+```
+
+Done
+Sekarang ganti implementasi carousel:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "            // ── Budget + Predictor carousel ───────────────────────────────────
+            var carouselPage by remember { mutableIntStateOf(0) }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                androidx.compose.animation.AnimatedContent(
+                    targetState = carouselPage,
+                    transitionSpec = {
+                        if (targetState > initialState)
+                            (androidx.compose.animation.slideInHorizontally { it } + androidx.compose.animation.fadeIn()) togetherWith
+                            (androidx.compose.animation.slideOutHorizontally { -it } + androidx.compose.animation.fadeOut())
+                        else
+                            (androidx.compose.animation.slideInHorizontally { -it } + androidx.compose.animation.fadeIn()) togetherWith
+                            (androidx.compose.animation.slideOutHorizontally { it } + androidx.compose.animation.fadeOut())
+                    },
+                    label = \"carousel\",
+                    modifier = Modifier.pointerInput(Unit) {
+                        detectHorizontalDragGestures { _, dragAmount ->
+                            if (dragAmount < -40f && carouselPage < 1) carouselPage++
+                            else if (dragAmount > 40f && carouselPage > 0) carouselPage--
+                        }
+                    },
+                ) { page ->
+                    if (page == 0) {
+                        BudgetCard(
+                            budgetPct    = budgetPct,
+                            monthExp     = state.monthExpense,
+                            budget       = state.monthlyBudget,
+                            todayRemain  = todayRemain,
+                            todayExpense = state.todayExpense,
+                            daysLeft     = daysLeft,
+                            hidden       = hidden,
+                            onEdit       = { showBudgetSheet = true },
+                            modifier     = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        PredictorCard(
+                            monthExpense = state.monthExpense,
+                            daysLeft     = daysLeft,
+                            modifier     = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                // Dot indicator + tap to switch
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    repeat(2) { i ->
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 3.dp)
+                                .size(if (i == carouselPage) 18.dp else 6.dp, 6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(if (i == carouselPage) GreenPrimary else Color(0xFFD1D5DB))
+                                .clickable { carouselPage = i },
+                        )
+                    }
+                }
+            }",
+      "newText": "            // ── Budget + Predictor carousel (real-time finger tracking) ────────
+            var carouselPage  by remember { mutableIntStateOf(0) }
+            var showPredictor by remember { mutableStateOf(false) }
+            val scope          = rememberCoroutineScope()
+            val offsetPx       = remember { androidx.compose.animation.core.Animatable(0f) }
+            var cardWidthPx    by remember { mutableIntStateOf(0) }
+
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { cardWidthPx = it.width }
+                        .pointerInput(carouselPage) {
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    val threshold = cardWidthPx * 0.25f
+                                    if (offsetPx.value < -threshold && carouselPage < 1) {
+                                        carouselPage = 1
+                                    } else if (offsetPx.value > threshold && carouselPage > 0) {
+                                        carouselPage = 0
+                                    }
+                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                },
+                                onDragCancel = {
+                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                },
+                                onHorizontalDrag = { _, delta ->
+                                    val newOffset = (offsetPx.value + delta)
+                                        .coerceIn(
+                                            if (carouselPage >= 1) -cardWidthPx.toFloat() else -cardWidthPx * 0.4f,
+                                            if (carouselPage <= 0) cardWidthPx.toFloat()  else  cardWidthPx * 0.4f,
+                                        )
+                                    scope.launch { offsetPx.snapTo(newOffset) }
+                                },
+                            )
+                        },
+                ) {
+                    // Previous card (peeks from left when swiping right on page 1)
+                    if (carouselPage == 1) {
+                        Box(
+                            modifier = Modifier
+                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value - cardWidthPx).toInt(), 0) }
+                                .fillMaxWidth(),
+                        ) {
+                            BudgetCard(
+                                budgetPct    = budgetPct,
+                                monthExp     = state.monthExpense,
+                                budget       = state.monthlyBudget,
+                                todayRemain  = todayRemain,
+                                todayExpense = state.todayExpense,
+                                daysLeft     = daysLeft,
+                                hidden       = hidden,
+                                onEdit       = { showBudgetSheet = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    // Current card
+                    Box(
+                        modifier = Modifier
+                            .offset { androidx.compose.ui.unit.IntOffset(offsetPx.value.toInt(), 0) }
+                            .fillMaxWidth(),
+                    ) {
+                        if (carouselPage == 0) {
+                            BudgetCard(
+                                budgetPct    = budgetPct,
+                                monthExp     = state.monthExpense,
+                                budget       = state.monthlyBudget,
+                                todayRemain  = todayRemain,
+                                todayExpense = state.todayExpense,
+                                daysLeft     = daysLeft,
+                                hidden       = hidden,
+                                onEdit       = { showBudgetSheet = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            PredictorCard(
+                                monthExpense = state.monthExpense,
+                                daysLeft     = daysLeft,
+                                onTap        = { showPredictor = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    // Next card (peeks from right when swiping left on page 0)
+                    if (carouselPage == 0) {
+                        Box(
+                            modifier = Modifier
+                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value + cardWidthPx).toInt(), 0) }
+                                .fillMaxWidth(),
+                        ) {
+                            PredictorCard(
+                                monthExpense = state.monthExpense,
+                                daysLeft     = daysLeft,
+                                onTap        = { showPredictor = true },
+                                modifier     = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+                // Dot indicator
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    repeat(2) { i ->
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 3.dp)
+                                .size(if (i == carouselPage) 18.dp else 6.dp, 6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(if (i == carouselPage) GreenPrimary else Color(0xFFD1D5DB))
+                                .clickable {
+                                    carouselPage = i
+                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                },
+                        )
+                    }
+                }
+            }
+
+            // ── Predictor detail popup ────────────────────────────────────────
+            if (showPredictor) {
+                PredictorDetailSheet(
+                    monthExpense = state.monthExpense,
+                    daysLeft     = daysLeft,
+                    onDismiss    = { showPredictor = false },
+                )
+            }"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\home\\HomeScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt	modified
+@@ -158,50 +158,109 @@
+             }
+ 
+             Spacer(Modifier.height(12.dp))
+ 
+-            // ── Budget + Predictor carousel ───────────────────────────────────
+-            var carouselPage by remember { mutableIntStateOf(0) }
++            // ── Budget + Predictor carousel (real-time finger tracking) ────────
++            var carouselPage  by remember { mutableIntStateOf(0) }
++            var showPredictor by remember { mutableStateOf(false) }
++            val scope          = rememberCoroutineScope()
++            val offsetPx       = remember { androidx.compose.animation.core.Animatable(0f) }
++            var cardWidthPx    by remember { mutableIntStateOf(0) }
++
+             Column(modifier = Modifier.fillMaxWidth()) {
+-                androidx.compose.animation.AnimatedContent(
+-                    targetState = carouselPage,
+-                    transitionSpec = {
+-                        if (targetState > initialState)
+-                            (androidx.compose.animation.slideInHorizontally { it } + androidx.compose.animation.fadeIn()) togetherWith
+-                            (androidx.compose.animation.slideOutHorizontally { -it } + androidx.compose.animation.fadeOut())
+-                        else
+-                            (androidx.compose.animation.slideInHorizontally { -it } + androidx.compose.animation.fadeIn()) togetherWith
+-                            (androidx.compose.animation.slideOutHorizontally { it } + androidx.compose.animation.fadeOut())
+-                    },
+-                    label = "carousel",
+-                    modifier = Modifier.pointerInput(Unit) {
+-                        detectHorizontalDragGestures { _, dragAmount ->
+-                            if (dragAmount < -40f && carouselPage < 1) carouselPage++
+-                            else if (dragAmount > 40f && carouselPage > 0) carouselPage--
++                Box(
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .onSizeChanged { cardWidthPx = it.width }
++                        .pointerInput(carouselPage) {
++                            detectHorizontalDragGestures(
++                                onDragEnd = {
++                                    val threshold = cardWidthPx * 0.25f
++                                    if (offsetPx.value < -threshold && carouselPage < 1) {
++                                        carouselPage = 1
++                                    } else if (offsetPx.value > threshold && carouselPage > 0) {
++                                        carouselPage = 0
++                                    }
++                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
++                                },
++                                onDragCancel = {
++                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
++                                },
++                                onHorizontalDrag = { _, delta ->
++                                    val newOffset = (offsetPx.value + delta)
++                                        .coerceIn(
++                                            if (carouselPage >= 1) -cardWidthPx.toFloat() else -cardWidthPx * 0.4f,
++                                            if (carouselPage <= 0) cardWidthPx.toFloat()  else  cardWidthPx * 0.4f,
++                                        )
++                                    scope.launch { offsetPx.snapTo(newOffset) }
++                                },
++                            )
++                        },
++                ) {
++                    // Previous card (peeks from left when swiping right on page 1)
++                    if (carouselPage == 1) {
++                        Box(
++                            modifier = Modifier
++                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value - cardWidthPx).toInt(), 0) }
++                                .fillMaxWidth(),
++                        ) {
++                            BudgetCard(
++                                budgetPct    = budgetPct,
++                                monthExp     = state.monthExpense,
++                                budget       = state.monthlyBudget,
++                                todayRemain  = todayRemain,
++                                todayExpense = state.todayExpense,
++                                daysLeft     = daysLeft,
++                                hidden       = hidden,
++                                onEdit       = { showBudgetSheet = true },
++                                modifier     = Modifier.fillMaxWidth(),
++                            )
+                         }
+-                    },
+-                ) { page ->
+-                    if (page == 0) {
+-                        BudgetCard(
+-                            budgetPct    = budgetPct,
+-                            monthExp     = state.monthExpense,
+-                            budget       = state.monthlyBudget,
+-                            todayRemain  = todayRemain,
+-                            todayExpense = state.todayExpense,
+-                            daysLeft     = daysLeft,
+-                            hidden       = hidden,
+-                            onEdit       = { showBudgetSheet = true },
+-                            modifier     = Modifier.fillMaxWidth(),
+-                        )
+-                    } else {
+-                        PredictorCard(
+-                            monthExpense = state.monthExpense,
+-                            daysLeft     = daysLeft,
+-                            modifier     = Modifier.fillMaxWidth(),
+-                        )
+                     }
++                    // Current card
++                    Box(
++                        modifier = Modifier
++                            .offset { androidx.compose.ui.unit.IntOffset(offsetPx.value.toInt(), 0) }
++                            .fillMaxWidth(),
++                    ) {
++                        if (carouselPage == 0) {
++                            BudgetCard(
++                                budgetPct    = budgetPct,
++                                monthExp     = state.monthExpense,
++                                budget       = state.monthlyBudget,
++                                todayRemain  = todayRemain,
++                                todayExpense = state.todayExpense,
++                                daysLeft     = daysLeft,
++                                hidden       = hidden,
++                                onEdit       = { showBudgetSheet = true },
++                                modifier     = Modifier.fillMaxWidth(),
++                            )
++                        } else {
++                            PredictorCard(
++                                monthExpense = state.monthExpense,
++                                daysLeft     = daysLeft,
++                                onTap        = { showPredictor = true },
++                                modifier     = Modifier.fillMaxWidth(),
++                            )
++                        }
++                    }
++                    // Next card (peeks from right when swiping left on page 0)
++                    if (carouselPage == 0) {
++                        Box(
++                            modifier = Modifier
++                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value + cardWidthPx).toInt(), 0) }
++                                .fillMaxWidth(),
++                        ) {
++                            PredictorCard(
++                                monthExpense = state.monthExpense,
++                                daysLeft     = daysLeft,
++                                onTap        = { showPredictor = true },
++                                modifier     = Modifier.fillMaxWidth(),
++                            )
++                        }
++                    }
+                 }
+-                // Dot indicator + tap to switch
++                // Dot indicator
+                 Row(
+                     horizontalArrangement = Arrangement.Center,
+                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                 ) {
+@@ -211,14 +270,26 @@
+                                 .padding(horizontal = 3.dp)
+                                 .size(if (i == carouselPage) 18.dp else 6.dp, 6.dp)
+                                 .clip(RoundedCornerShape(3.dp))
+                                 .background(if (i == carouselPage) GreenPrimary else Color(0xFFD1D5DB))
+-                                .clickable { carouselPage = i },
++                                .clickable {
++                                    carouselPage = i
++                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
++                                },
+                         )
+                     }
+                 }
+             }
+ 
++            // ── Predictor detail popup ────────────────────────────────────────
++            if (showPredictor) {
++                PredictorDetailSheet(
++                    monthExpense = state.monthExpense,
++                    daysLeft     = daysLeft,
++                    onDismiss    = { showPredictor = false },
++                )
++            }
++
+             // ── Akun Saya ────────────────────────────────────────────────────
+             Spacer(Modifier.height(14.dp))
+             Row(
+                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+```
+
+Done
+Sekarang update PredictorCard untuk tambahkan onTap parameter, dan tambah PredictorDetailSheet:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "@Composable
+private fun PredictorCard(monthExpense: Long, daysLeft: Int, modifier: Modifier = Modifier) {
+    val elapsed  = (30 - daysLeft).coerceAtLeast(1)
+    val avgDaily = monthExpense / elapsed
+    val estMonth = avgDaily * 30
+    Box(
+        modifier = modifier
+            .shadow(2.dp, RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
+            .padding(16.dp),
+    ) {
+        Column {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Text(\"Prediksi Keuangan\", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
+            }
+            Text(\"Estimasi pengeluaran bulan ini\", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DarkStat(\"AVG/HARI\",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+                DarkStat(\"EST. BULAN\", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
+                DarkStat(\"SISA HARI\",  \"$daysLeft hr\",                        Color.White,        Modifier.weight(1f))
+            }
+        }
+    }
+}",
+      "newText": "@Composable
+private fun PredictorCard(monthExpense: Long, daysLeft: Int, onTap: () -> Unit = {}, modifier: Modifier = Modifier) {
+    val elapsed  = (30 - daysLeft).coerceAtLeast(1)
+    val avgDaily = monthExpense / elapsed
+    val estMonth = avgDaily * 30
+    Box(
+        modifier = modifier
+            .shadow(2.dp, RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
+            .clickable(onClick = onTap)
+            .padding(16.dp),
+    ) {
+        Column {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Text(\"Prediksi Keuangan\", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
+                    Box(
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) { Text(\"Detail ›\", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFA7F3D0)) }
+                }
+            }
+            Text(\"Estimasi pengeluaran bulan ini\", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DarkStat(\"AVG/HARI\",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+                DarkStat(\"EST. BULAN\", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
+                DarkStat(\"SISA HARI\",  \"$daysLeft hr\",                        Color.White,        Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+// ── Predictor detail bottom sheet ──────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: () -> Unit) {
+    val elapsed      = (30 - daysLeft).coerceAtLeast(1)
+    val avgDaily     = monthExpense / elapsed
+    val estMonth     = avgDaily * 30
+    val daysInMonth  = 30
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState       = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor   = PageBg,
+        shape            = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(top = 4.dp, bottom = 24.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically,
+                modifier              = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            ) {
+                Column {
+                    Text(\"Prediksi Keuangan\", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text(\"Estimasi pengeluaran bulanmu\", fontSize = 12.sp, color = TextLight)
+                }
+                IconButton(
+                    onClick  = onDismiss,
+                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(Color(0xFFE5E7EB)),
+                ) {
+                    Icon(PhosphorIcons.Regular.X, null, tint = TextDark, modifier = Modifier.size(14.dp))
+                }
+            }
+
+            // Stats row
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
+                    .padding(16.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DarkStat(\"AVG/HARI\",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+                    DarkStat(\"EST. BULAN\", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
+                    DarkStat(\"SISA HARI\",  \"$daysLeft hr\",                        Color.White,        Modifier.weight(1f))
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Explanation cards
+            listOf(
+                Triple(
+                    \"Estimasi Pengeluaran Bulanan\",
+                    PhosphorIcons.Regular.ChartLine,
+                    \"Berdasarkan rata-rata harian pengeluaranmu selama $elapsed hari terakhir, diproyeksikan total pengeluaran bulan ini akan mencapai ${CurrencyFormatter.format(estMonth)}. Angka ini akan terus diperbarui setiap hari.\",
+                ),
+                Triple(
+                    \"Rata-Rata per Hari (AVG/HARI)\",
+                    PhosphorIcons.Regular.CalendarBlank,
+                    \"Rata-rata kamu mengeluarkan ${CurrencyFormatter.format(avgDaily)} per hari bulan ini. Dihitung dari total pengeluaran ${CurrencyFormatter.format(monthExpense)} dibagi $elapsed hari yang telah berlalu.\",
+                ),
+                Triple(
+                    \"Estimasi Bulan (EST. BULAN)\",
+                    PhosphorIcons.Regular.TrendUp,
+                    \"Proyeksi total pengeluaran jika pola belanjamu tetap sama hingga akhir bulan: ${CurrencyFormatter.format(avgDaily)} × $daysInMonth hari = ${CurrencyFormatter.format(estMonth)}.\",
+                ),
+                Triple(
+                    \"Sisa Hari\",
+                    PhosphorIcons.Regular.Timer,
+                    \"Masih ada $daysLeft hari tersisa di bulan ini. Kamu punya kesempatan untuk menyesuaikan pola pengeluaranmu agar estimasi akhir bulan lebih sesuai target.\",
+                ),
+            ).forEach { (title, icon, desc) ->
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(CardWhite)
+                        .padding(14.dp)
+                        .padding(bottom = 4.dp),
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(GreenLight),
+                    ) {
+                        Icon(icon, null, tint = GreenPrimary, modifier = Modifier.size(18.dp))
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(title, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                        Spacer(Modifier.height(3.dp))
+                        Text(desc, fontSize = 11.sp, color = TextMedium, lineHeight = 16.sp)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\home\\HomeScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\home\HomeScreen.kt	modified
+@@ -416,23 +416,29 @@
+ }
+ 
+ // ── Predictor card ────────────────────────────────────────────────────────────
+ @Composable
+-private fun PredictorCard(monthExpense: Long, daysLeft: Int, modifier: Modifier = Modifier) {
++private fun PredictorCard(monthExpense: Long, daysLeft: Int, onTap: () -> Unit = {}, modifier: Modifier = Modifier) {
+     val elapsed  = (30 - daysLeft).coerceAtLeast(1)
+     val avgDaily = monthExpense / elapsed
+     val estMonth = avgDaily * 30
+     Box(
+         modifier = modifier
+             .shadow(2.dp, RoundedCornerShape(18.dp))
+             .clip(RoundedCornerShape(18.dp))
+             .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
++            .clickable(onClick = onTap)
+             .padding(16.dp),
+     ) {
+         Column {
+             Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                 Text("Prediksi Keuangan", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+-                Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
++                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
++                    Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
++                    Box(
++                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 3.dp)
++                    ) { Text("Detail ›", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFA7F3D0)) }
++                }
+             }
+             Text("Estimasi pengeluaran bulan ini", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
+             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                 DarkStat("AVG/HARI",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+@@ -442,9 +448,116 @@
+         }
+     }
+ }
+ 
++// ── Predictor detail bottom sheet ──────────────────────────────────────────
++@OptIn(ExperimentalMaterial3Api::class)
+ @Composable
++private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: () -> Unit) {
++    val elapsed      = (30 - daysLeft).coerceAtLeast(1)
++    val avgDaily     = monthExpense / elapsed
++    val estMonth     = avgDaily * 30
++    val daysInMonth  = 30
++
++    ModalBottomSheet(
++        onDismissRequest = onDismiss,
++        sheetState       = rememberModalBottomSheetState(skipPartiallyExpanded = true),
++        containerColor   = PageBg,
++        shape            = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
++    ) {
++        Column(
++            modifier = Modifier
++                .fillMaxWidth()
++                .navigationBarsPadding()
++                .padding(horizontal = 16.dp)
++                .padding(top = 4.dp, bottom = 24.dp),
++        ) {
++            Row(
++                horizontalArrangement = Arrangement.SpaceBetween,
++                verticalAlignment     = Alignment.CenterVertically,
++                modifier              = Modifier.fillMaxWidth().padding(bottom = 16.dp),
++            ) {
++                Column {
++                    Text("Prediksi Keuangan", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
++                    Text("Estimasi pengeluaran bulanmu", fontSize = 12.sp, color = TextLight)
++                }
++                IconButton(
++                    onClick  = onDismiss,
++                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(Color(0xFFE5E7EB)),
++                ) {
++                    Icon(PhosphorIcons.Regular.X, null, tint = TextDark, modifier = Modifier.size(14.dp))
++                }
++            }
++
++            // Stats row
++            Box(
++                modifier = Modifier
++                    .fillMaxWidth()
++                    .clip(RoundedCornerShape(18.dp))
++                    .background(Brush.linearGradient(listOf(Color(0xFF0A4F38), GreenDark)))
++                    .padding(16.dp),
++            ) {
++                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    DarkStat("AVG/HARI",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
++                    DarkStat("EST. BULAN", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
++                    DarkStat("SISA HARI",  "$daysLeft hr",                        Color.White,        Modifier.weight(1f))
++                }
++            }
++
++            Spacer(Modifier.height(16.dp))
++
++            // Explanation cards
++            listOf(
++                Triple(
++                    "Estimasi Pengeluaran Bulanan",
++                    PhosphorIcons.Regular.ChartLine,
++                    "Berdasarkan rata-rata harian pengeluaranmu selama $elapsed hari terakhir, diproyeksikan total pengeluaran bulan ini akan mencapai ${CurrencyFormatter.format(estMonth)}. Angka ini akan terus diperbarui setiap hari.",
++                ),
++                Triple(
++                    "Rata-Rata per Hari (AVG/HARI)",
++                    PhosphorIcons.Regular.CalendarBlank,
++                    "Rata-rata kamu mengeluarkan ${CurrencyFormatter.format(avgDaily)} per hari bulan ini. Dihitung dari total pengeluaran ${CurrencyFormatter.format(monthExpense)} dibagi $elapsed hari yang telah berlalu.",
++                ),
++                Triple(
++                    "Estimasi Bulan (EST. BULAN)",
++                    PhosphorIcons.Regular.TrendUp,
++                    "Proyeksi total pengeluaran jika pola belanjamu tetap sama hingga akhir bulan: ${CurrencyFormatter.format(avgDaily)} × $daysInMonth hari = ${CurrencyFormatter.format(estMonth)}.",
++                ),
++                Triple(
++                    "Sisa Hari",
++                    PhosphorIcons.Regular.Timer,
++                    "Masih ada $daysLeft hari tersisa di bulan ini. Kamu punya kesempatan untuk menyesuaikan pola pengeluaranmu agar estimasi akhir bulan lebih sesuai target.",
++                ),
++            ).forEach { (title, icon, desc) ->
++                Row(
++                    verticalAlignment = Alignment.Top,
++                    horizontalArrangement = Arrangement.spacedBy(12.dp),
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .clip(RoundedCornerShape(14.dp))
++                        .background(CardWhite)
++                        .padding(14.dp)
++                        .padding(bottom = 4.dp),
++                ) {
++                    Box(
++                        contentAlignment = Alignment.Center,
++                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(GreenLight),
++                    ) {
++                        Icon(icon, null, tint = GreenPrimary, modifier = Modifier.size(18.dp))
++                    }
++                    Column(modifier = Modifier.weight(1f)) {
++                        Text(title, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
++                        Spacer(Modifier.height(3.dp))
++                        Text(desc, fontSize = 11.sp, color = TextMedium, lineHeight = 16.sp)
++                    }
++                }
++                Spacer(Modifier.height(8.dp))
++            }
++        }
++    }
++}
++
++@Composable
+ private fun DarkStat(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+     Box(modifier = modifier.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.12f)).padding(8.dp)) {
+         Column {
+             Text(label, fontSize = 8.sp, fontWeight = FontWeight.ExtraBold, color = Color.White.copy(alpha = 0.65f), letterSpacing = 0.4.sp)
+```
+
+Done
+Perlu add import TextMedium dan Timer icon. Sekarang Fix 3 — wire onTxnClick ke AccountDetailScreen. Fix 4 — X button padding. Fix 5 — ProfileInfoChip. Fix 6 — hide balance di Transactions & Accounts. Fix 7,8 — Edit profil. Semua sekarang:
+
+
+Memverifikasi kehadiran fungsi dan melacak aliran data komponen
+Memverifikasi kehadiran fungsi dan melacak aliran data komponen
+F
+
+
+Edit file
+
+Result
+F
+
+
+Read text file
+
+Result
+Good, onTxnClick is already there! Let me now check if the TransactionRow in AccountDetailScreen is actually passing this:
+
+Done
+onTxnClick sudah ada. Cek apakah TransactionRow sudah pakai:
+
+
+Read text file
+Read text file
+F
+
+
+Read text file
+
+Result
+Done
+onClick = { detailTxn = txn } sudah ada dan sudah handle via local detailTxn. Berarti Fix 3 sudah bekerja — TransactionDetailSheet dibuka lokal. ✅
+
+Sekarang NavGraph — pastikan AccountDetailScreen mendapat onTxnClick:
+
+
+Mengidentifikasi masalah scope dan merencanakan pembersihan kode
+Mengidentifikasi masalah scope dan merencanakan pembersihan kode
+F
+
+
+Read text file
+
+Result
+Good, NavGraph already has onTxnClick but it references txnVm which might not be in scope. Let me clean it up since AccountDetailScreen handles clicks locally via its own detailTxn state.
+
+Done
+onTxnClick sudah ada tapi ada reference ke txnVm yang tidak dalam scope. Fix — AccountDetailScreen handle sendiri jadi tidak perlu pass:
+
+
+Mengidentifikasi kesalahan sintaks dan menyederhanakan parameter fungsi
+Mengidentifikasi kesalahan sintaks dan menyederhanakan parameter fungsi
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "                onTxnClick   = { txn -> txnVm.run { } },  // handled locally in AccountDetailScreen",
+      "newText": "                // onTxnClick handled locally inside AccountDetailScreen via detailTxn state"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\
+avigation\\NavGraph.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\navigation\NavGraph.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\navigation\NavGraph.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\navigation\NavGraph.kt	modified
+@@ -134,9 +134,9 @@
+                 transactions = allTxns,
+                 accounts     = accounts,
+                 onBack       = { navController.popBackStack() },
+                 onEdit       = { editTarget = it },
+-                onTxnClick   = { txn -> txnVm.run { } },  // handled locally in AccountDetailScreen
++                // onTxnClick handled locally inside AccountDetailScreen via detailTxn state
+             )
+ 
+             editTarget?.let { target ->
+                 AccountFormSheet(
+```
+
+Wait, that won't compile — I can't just put a comment in the function call argument position. Let me fix this properly — just remove the onTxnClick parameter since it has a default value of {}.
+
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "                onBack       = { navController.popBackStack() },
+                onEdit       = { editTarget = it },
+                // onTxnClick handled locally inside AccountDetailScreen via detailTxn state
+            )",
+      "newText": "                onBack       = { navController.popBackStack() },
+                onEdit       = { editTarget = it },
+            )"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\
+avigation\\NavGraph.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\navigation\NavGraph.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\navigation\NavGraph.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\navigation\NavGraph.kt	modified
+@@ -134,9 +134,8 @@
+                 transactions = allTxns,
+                 accounts     = accounts,
+                 onBack       = { navController.popBackStack() },
+                 onEdit       = { editTarget = it },
+-                // onTxnClick handled locally inside AccountDetailScreen via detailTxn state
+             )
+ 
+             editTarget?.let { target ->
+                 AccountFormSheet(
+```
+
+Done
+Sekarang Fix 4 — X button padding di semua sheet. Cek TransactionFormSheet header:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+Done
+TransactionFormSheet sudah punya padding(top = 8.dp) di header. Cek AccountFormSheet dan TransferSheet:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Read text file
+
+Result
+F
+
+
+Search files
+
+Result
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+Done
+AccountFormSheet sudah punya padding(top = 8.dp). Cek TransferSheet header:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Edit file
+
+Result
+F
+
+
+Read text file
+
+Result
+F
+
+
+Search files
+
+Result
+F
+
+
+Read text file
+
+Result
+Done
+TransferSheet sudah punya padding(top = 8.dp) ✅. Sekarang Fix 5 — ProfileInfoChip dan ProfileCard padding. Fix 6 — hide balance di TransactionsScreen. Fix 7,8 — EDUS sync dan "Lainnya" free text. Semua di ProfileScreen:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "private val JOBS = listOf(
+    \"Pelajar / Mahasiswa\",\"Karyawan Swasta\",\"PNS / ASN\",\"Wirausaha\",
+    \"Freelancer\",\"Ibu Rumah Tangga\",\"Profesional (Dokter/Pengacara/dll)\",\"Lainnya\",
+)
+private val EDUS = listOf(
+    \"SD / Sederajat\",\"SMP / Sederajat\",\"SMA / Sederajat\",
+    \"D3\",\"S1\",\"S2\",\"S3\",
+)",
+      "newText": "private val JOBS = listOf(
+    \"Pelajar / Mahasiswa\", \"Guru / Dosen\", \"PNS / ASN\", \"Karyawan Swasta\",
+    \"Wiraswasta / Pengusaha\", \"Freelancer\", \"Dokter / Tenaga Medis\",
+    \"Engineer / Programmer\", \"Desainer / Kreator\", \"Buruh / Pekerja Harian\",
+    \"Ibu Rumah Tangga\", \"Pensiunan\", \"Belum Bekerja\", \"Lainnya\",
+)
+private val EDUS = listOf(
+    \"SD / Sederajat\", \"SMP / Sederajat\", \"SMA / SMK / Sederajat\",
+    \"Diploma (D1-D3)\", \"Sarjana (S1)\", \"Magister (S2)\", \"Doktor (S3)\",
+    \"Tidak Ingin Menyebutkan\",
+)"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile\\ProfileScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	modified
+@@ -36,14 +36,17 @@
+ import com.dompetku.ui.theme.*
+ import com.dompetku.util.PinHasher
+ 
+ private val JOBS = listOf(
+-    "Pelajar / Mahasiswa","Karyawan Swasta","PNS / ASN","Wirausaha",
+-    "Freelancer","Ibu Rumah Tangga","Profesional (Dokter/Pengacara/dll)","Lainnya",
++    "Pelajar / Mahasiswa", "Guru / Dosen", "PNS / ASN", "Karyawan Swasta",
++    "Wiraswasta / Pengusaha", "Freelancer", "Dokter / Tenaga Medis",
++    "Engineer / Programmer", "Desainer / Kreator", "Buruh / Pekerja Harian",
++    "Ibu Rumah Tangga", "Pensiunan", "Belum Bekerja", "Lainnya",
+ )
+ private val EDUS = listOf(
+-    "SD / Sederajat","SMP / Sederajat","SMA / Sederajat",
+-    "D3","S1","S2","S3",
++    "SD / Sederajat", "SMP / Sederajat", "SMA / SMK / Sederajat",
++    "Diploma (D1-D3)", "Sarjana (S1)", "Magister (S2)", "Doktor (S3)",
++    "Tidak Ingin Menyebutkan",
+ )
+ 
+ @Composable
+ fun ProfileScreen(
+```
+
+Done
+Sekarang fix EditProfileSheet — tambah "Lainnya" free text untuk pekerjaan, dan fix ProfileInfoChip layout:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "            Text(\"PEKERJAAN\", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+            Spacer(Modifier.height(4.dp))
+            var expandJob by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded = expandJob, onExpandedChange = { expandJob = it }) {
+                OutlinedTextField(
+                    value = job.ifEmpty { \"— Pilih —\" }, onValueChange = {}, readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expandJob) },
+                    shape  = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = GreenPrimary, unfocusedBorderColor = Color(0xFFE5E7EB),
+                        focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite,
+                    ),
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                )
+                ExposedDropdownMenu(expanded = expandJob, onDismissRequest = { expandJob = false }, modifier = Modifier.background(CardWhite)) {
+                    JOBS.forEach { opt -> DropdownMenuItem(text = { Text(opt, fontSize = 13.sp) }, onClick = { job = opt; expandJob = false }) }
+                }
+            }",
+      "newText": "            Text(\"PEKERJAAN\", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+            Spacer(Modifier.height(4.dp))
+            var expandJob   by remember { mutableStateOf(false) }
+            var customJob   by remember { mutableStateOf(if (job !in JOBS && job.isNotEmpty()) job else \"\") }
+            val isCustomJob  = job == \"Lainnya\" || (job.isNotEmpty() && job !in JOBS)
+            ExposedDropdownMenuBox(expanded = expandJob, onExpandedChange = { expandJob = it }) {
+                OutlinedTextField(
+                    value = job.ifEmpty { \"— Pilih —\" }, onValueChange = {}, readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expandJob) },
+                    shape  = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = GreenPrimary, unfocusedBorderColor = Color(0xFFE5E7EB),
+                        focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite,
+                    ),
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                )
+                ExposedDropdownMenu(expanded = expandJob, onDismissRequest = { expandJob = false }, modifier = Modifier.background(CardWhite)) {
+                    JOBS.forEach { opt -> DropdownMenuItem(text = { Text(opt, fontSize = 13.sp) }, onClick = { job = opt; expandJob = false }) }
+                }
+            }
+            // Free-text input when \"Lainnya\" selected
+            if (isCustomJob) {
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value         = customJob,
+                    onValueChange = { customJob = it; job = it.ifEmpty { \"Lainnya\" } },
+                    placeholder   = { Text(\"Tulis pekerjaanmu...\", color = TextLight) },
+                    singleLine    = true,
+                    shape         = RoundedCornerShape(12.dp),
+                    colors        = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor   = GreenPrimary, unfocusedBorderColor = Color(0xFFE5E7EB),
+                        focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile\\ProfileScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	modified
+@@ -378,9 +378,11 @@
+             Spacer(Modifier.height(12.dp))
+ 
+             Text("PEKERJAAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+             Spacer(Modifier.height(4.dp))
+-            var expandJob by remember { mutableStateOf(false) }
++            var expandJob   by remember { mutableStateOf(false) }
++            var customJob   by remember { mutableStateOf(if (job !in JOBS && job.isNotEmpty()) job else "") }
++            val isCustomJob  = job == "Lainnya" || (job.isNotEmpty() && job !in JOBS)
+             ExposedDropdownMenuBox(expanded = expandJob, onExpandedChange = { expandJob = it }) {
+                 OutlinedTextField(
+                     value = job.ifEmpty { "— Pilih —" }, onValueChange = {}, readOnly = true,
+                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expandJob) },
+@@ -394,8 +396,24 @@
+                 ExposedDropdownMenu(expanded = expandJob, onDismissRequest = { expandJob = false }, modifier = Modifier.background(CardWhite)) {
+                     JOBS.forEach { opt -> DropdownMenuItem(text = { Text(opt, fontSize = 13.sp) }, onClick = { job = opt; expandJob = false }) }
+                 }
+             }
++            // Free-text input when "Lainnya" selected
++            if (isCustomJob) {
++                Spacer(Modifier.height(6.dp))
++                OutlinedTextField(
++                    value         = customJob,
++                    onValueChange = { customJob = it; job = it.ifEmpty { "Lainnya" } },
++                    placeholder   = { Text("Tulis pekerjaanmu...", color = TextLight) },
++                    singleLine    = true,
++                    shape         = RoundedCornerShape(12.dp),
++                    colors        = OutlinedTextFieldDefaults.colors(
++                        focusedBorderColor   = GreenPrimary, unfocusedBorderColor = Color(0xFFE5E7EB),
++                        focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite,
++                    ),
++                    modifier = Modifier.fillMaxWidth(),
++                )
++            }
+ 
+             Spacer(Modifier.height(12.dp))
+ 
+             Text("PENDIDIKAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+```
+
+Done
+Sekarang fix ProfileInfoChip — dari screenshot, chip perlu lebih compact dan proporsional:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "@Composable
+private fun ProfileInfoChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF8FAFC))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+        Spacer(Modifier.height(2.dp))
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+    }
+}",
+      "newText": "@Composable
+private fun ProfileInfoChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFF1F5F9))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = TextLight, letterSpacing = 0.8.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(value, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(CardWhite)
+            .padding(14.dp),
+        content = content,
+    )
+}"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile\\ProfileScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	modified
+@@ -504,13 +504,26 @@
+ @Composable
+ private fun ProfileInfoChip(label: String, value: String, modifier: Modifier = Modifier) {
+     Column(
+         modifier = modifier
+-            .clip(RoundedCornerShape(10.dp))
+-            .background(Color(0xFFF8FAFC))
+-            .padding(horizontal = 12.dp, vertical = 10.dp),
++            .clip(RoundedCornerShape(12.dp))
++            .background(Color(0xFFF1F5F9))
++            .padding(horizontal = 14.dp, vertical = 12.dp),
+     ) {
+-        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+-        Spacer(Modifier.height(2.dp))
+-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
++        Text(label, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = TextLight, letterSpacing = 0.8.sp)
++        Spacer(Modifier.height(4.dp))
++        Text(value, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+     }
+ }
++
++@Composable
++private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
++    Column(
++        modifier = Modifier
++            .fillMaxWidth()
++            .padding(bottom = 4.dp)
++            .clip(RoundedCornerShape(18.dp))
++            .background(CardWhite)
++            .padding(14.dp),
++        content = content,
++    )
++}
+```
+
+Done
+Ada duplikasi ProfileCard sekarang. Hapus yang lama:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Search files
+Request
+
+{
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile",
+  "pattern": "fun ProfileCard"
+}
+Response
+
+No matches found
+F
+
+
+Read text file
+
+Result
+Done
+Ada dua ProfileCard. Hapus yang lama (tanpa padding(14.dp)):
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "@Composable
+private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(CardWhite),
+        content = content,
+    )
+}
+
+@Composable
+private fun ProfileInfoChip",
+      "newText": "@Composable
+private fun ProfileInfoChip"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile\\ProfileScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	modified
+@@ -489,20 +489,8 @@
+     }
+ }
+ 
+ @Composable
+-private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
+-    Column(
+-        modifier = Modifier
+-            .fillMaxWidth()
+-            .padding(bottom = 4.dp)
+-            .clip(RoundedCornerShape(18.dp))
+-            .background(CardWhite),
+-        content = content,
+-    )
+-}
+-
+-@Composable
+ private fun ProfileInfoChip(label: String, value: String, modifier: Modifier = Modifier) {
+     Column(
+         modifier = modifier
+             .clip(RoundedCornerShape(12.dp))
+```
+
+Done
+Sekarang fix ProfileCard yang baru sudah punya padding(14.dp) sehingga chips tidak perlu padding sendiri. Tapi ProfileCard dipakai di banyak tempat seperti section Keamanan, Preferensi, Data — semua itu jangan punya padding(14.dp) karena sudah pakai SectionRow. Perlu pisahkan jadi dua variant. Cek penggunaan:
+
+ProfileCard di Keamanan, Preferensi, dll menggunakan SectionRow yang sudah punya padding sendiri. Kalau ProfileCard dikasih padding(14.dp) akan double-padding. Ubah pendekatan — hapus padding dari ProfileCard, kasih ke ProfileInfoChip section saja:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "@Composable
+private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(CardWhite)
+            .padding(14.dp),
+        content = content,
+    )
+}",
+      "newText": "@Composable
+private fun ProfileCard(
+    innerPadding: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(CardWhite)
+            .then(if (innerPadding) Modifier.padding(14.dp) else Modifier),
+        content = content,
+    )
+}"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile\\ProfileScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	modified
+@@ -503,15 +503,18 @@
+     }
+ }
+ 
+ @Composable
+-private fun ProfileCard(content: @Composable ColumnScope.() -> Unit) {
++private fun ProfileCard(
++    innerPadding: Boolean = false,
++    content: @Composable ColumnScope.() -> Unit
++) {
+     Column(
+         modifier = Modifier
+             .fillMaxWidth()
+             .padding(bottom = 4.dp)
+             .clip(RoundedCornerShape(18.dp))
+             .background(CardWhite)
+-            .padding(14.dp),
++            .then(if (innerPadding) Modifier.padding(14.dp) else Modifier),
+         content = content,
+     )
+ }
+```
+
+Done
+Sekarang update call site ProfileCard untuk "PROFIL SAYA" yang butuh padding:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "            ProfileCard {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    ProfileInfoChip(\"UMUR\",",
+      "newText": "            ProfileCard(innerPadding = true) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    ProfileInfoChip(\"UMUR\","
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\\profile\\ProfileScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\profile\ProfileScreen.kt	modified
+@@ -122,9 +122,9 @@
+                 ) {
+                     Text("Edit", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
+                 }
+             }
+-            ProfileCard {
++            ProfileCard(innerPadding = true) {
+                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                     ProfileInfoChip("UMUR",
+                         if (profile.age > 0) "${profile.age} tahun" else "—",
+                         modifier = Modifier.weight(1f))
+```
+
+Done
+Sekarang Fix 6 — tambah hide balance toggle di TransactionsScreen. Cek header TransactionsScreen:
+
+
+Read text file
+Read text file
+F
+
+
+Read text file
+
+Result
+Done
+Cek bagian summary banner untuk tahu di mana menambah toggle hide:
+
+
+Edit file
+Edit file
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "        AppHeader(title = \"Transaksi\", showSearch = true, showDate = false, onSearchClick = { showSearch = !showSearch })",
+      "newText": "        AppHeader(
+            title         = \"Transaksi\",
+            showSearch    = true,
+            showDate      = false,
+            onSearchClick = { showSearch = !showSearch },
+            trailingContent = {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (state.hidden) GreenLight else Color(0xFFF1F5F9))
+                        .clickable { viewModel.toggleHideBalance() },
+                ) {
+                    Icon(
+                        imageVector = if (state.hidden) PhosphorIcons.Regular.EyeSlash else PhosphorIcons.Regular.Eye,
+                        contentDescription = null,
+                        tint     = if (state.hidden) GreenPrimary else TextMedium,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            },
+        )"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\screen\	ransactions\\TransactionsScreen.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\transactions\TransactionsScreen.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\transactions\TransactionsScreen.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\screen\transactions\TransactionsScreen.kt	modified
+@@ -59,9 +59,31 @@
+             .background(PageBg)
+             .verticalScroll(rememberScrollState())
+             .padding(bottom = 100.dp),
+     ) {
+-        AppHeader(title = "Transaksi", showSearch = true, showDate = false, onSearchClick = { showSearch = !showSearch })
++        AppHeader(
++            title         = "Transaksi",
++            showSearch    = true,
++            showDate      = false,
++            onSearchClick = { showSearch = !showSearch },
++            trailingContent = {
++                Box(
++                    contentAlignment = Alignment.Center,
++                    modifier = Modifier
++                        .size(32.dp)
++                        .clip(RoundedCornerShape(9.dp))
++                        .background(if (state.hidden) GreenLight else Color(0xFFF1F5F9))
++                        .clickable { viewModel.toggleHideBalance() },
++                ) {
++                    Icon(
++                        imageVector = if (state.hidden) PhosphorIcons.Regular.EyeSlash else PhosphorIcons.Regular.Eye,
++                        contentDescription = null,
++                        tint     = if (state.hidden) GreenPrimary else TextMedium,
++                        modifier = Modifier.size(15.dp),
++                    )
++                }
++            },
++        )
+ 
+         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+             Spacer(Modifier.height(8.dp))
+ 
+```
+
+Done
+Perlu cek apakah AppHeader mendukung trailingContent dan toggleHideBalance ada di TransactionsViewModel:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Search files
+
+Result
+F
+
+
+Read text file
+
+Result
+F
+
+
+Read text file
+
+Result
+F
+
+
+Search files
+
+Result
+F
+
+
+Read text file
+
+Result
+Done
+AppHeader tidak punya trailingContent. Perlu tambahkan parameter tersebut, atau lebih mudah — tambahkan parameter eye toggle langsung. Update AppHeader:
+
+
+Used Filesystem integration
+Used Filesystem integration
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "@Composable
+fun AppHeader(
+    title:        String,
+    showDate:     Boolean = true,
+    showSearch:   Boolean = false,
+    showLock:     Boolean = false,
+    onSearchClick: () -> Unit = {},
+    onLockClick:   () -> Unit = {},
+) {",
+      "newText": "@Composable
+fun AppHeader(
+    title:        String,
+    showDate:     Boolean = true,
+    showSearch:   Boolean = false,
+    showLock:     Boolean = false,
+    onSearchClick: () -> Unit = {},
+    onLockClick:   () -> Unit = {},
+    trailingContent: @Composable (() -> Unit)? = null,
+) {"
+    }
+  ],
+  "path": "C:\\WORK\\Projects\\DompetKu\\app\\src\\main\\java\\com\\dompetku\\ui\\components\\CommonComponents.kt"
+}
+Response
+
+```diff
+Index: C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\components\CommonComponents.kt
+===================================================================
+--- C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\components\CommonComponents.kt	original
++++ C:\WORK\Projects\DompetKu\app\src\main\java\com\dompetku\ui\components\CommonComponents.kt	modified
+@@ -131,8 +131,9 @@
+     showSearch:   Boolean = false,
+     showLock:     Boolean = false,
+     onSearchClick: () -> Unit = {},
+     onLockClick:   () -> Unit = {},
++    trailingContent: @Composable (() -> Unit)? = null,
+ ) {
+     val today = remember {
+         LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale("id", "ID")))
+     }
+```
+
+F
+
+
+Edit file
+Request
+
+{
+  "edits": [
+    {
+      "oldText": "                if (showLock) {
+                    IconButton(
+                        onClick  = onLockClick,
+                        modifier = Mod"
+    }
+  ]
+}
