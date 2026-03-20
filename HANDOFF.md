@@ -255,7 +255,99 @@ notifEnabled, userProfile: UserProfile
 
 ---
 
+---
+
+## UNTUK GPT CODEX — HANDOFF AKTIF
+
+> Dokumen ini adalah satu-satunya referensi project. Baca seluruh HANDOFF sebelum mulai coding.
+> Project path: `C:\Users\Yahya Hamdallah\Documents\GitHub\DompetKu-Native`
+> Gunakan Filesystem MCP untuk baca/edit file. Jangan gunakan git, terminal, atau tool lain.
+
+### Konteks sebelum kamu mulai
+- App: **DompetKu** — Android personal finance, Kotlin + Jetpack Compose + Room + Hilt + MVVM
+- Claude sudah mengerjakan semua fitur sampai hari ini (Sabtu, 21 Maret 2026)
+- Weekly limit Claude hampir habis, pekerjaan dilanjutkan oleh kamu (Codex)
+- Claude akan kembali Kamis depan untuk review dan lanjut
+
+### Rules wajib yang TIDAK BOLEH dilanggar
+| Rule | Detail |
+|------|--------|
+| `enableEdgeToEdge()` | HAPUS dari MainActivity — jangan tambahkan |
+| `MainActivity` | Extends `FragmentActivity`, BUKAN `ComponentActivity` |
+| `Toggle` composable | `onToggle = { }` tanpa parameter |
+| DB version | Sekarang `3` — kalau ada schema change, bump ke `4` dan `fallbackToDestructiveMigration()` tetap aktif |
+| `TxnUiState.allTxns` | TIDAK ADA — gunakan `grouped`, `totalCount`, `accountMap` |
+| Color gradients | `Color(account.gradientStart.toInt())` — selalu `.toInt()` |
+
+### Tugas yang harus dikerjakan Codex
+
+**TASK 1 — PIN Setup Screen baru (prioritas tinggi)**
+- Saat ini: tap "Kunci PIN" → toggle ON → muncul `ChangePinSheet` (bottom sheet biasa dengan TextField)
+- Yang diinginkan: **full screen baru** mirip `PinLockScreen.kt` dengan custom keypad DompetKu
+- File referensi: `ui/screen/pin/PinLockScreen.kt` — lihat layout custom keypad-nya
+- Buat file baru: `ui/screen/pin/PinSetupScreen.kt`
+- Alur: 2 tahap — (1) masukkan PIN baru, (2) konfirmasi PIN ulang. Kalau cocok, simpan.
+- Navigasi: dari `ProfileScreen`, saat toggle PIN ON → navigate ke `PinSetupScreen` via NavGraph
+- Tambahkan `Screen.PinSetup` di `Screen.kt` dan route di `NavGraph.kt`
+- Warna: gradient hijau DompetKu (GreenPrimary → GreenDark), sama persis dengan `PinLockScreen`
+
+**TASK 2 — Vibration / Haptics**
+- Tambah haptic feedback di:
+  1. Setiap tap tombol di keypad (PinLockScreen, PinSetupScreen baru)
+  2. Toggle ON dan OFF di `ProfileScreen` — gunakan pola berbeda (ON = 2 pulsa, OFF = 1 pulsa)
+  3. FAB tap di `FanNav.kt`
+- Gunakan `android.os.Vibrator` via `getSystemService(Context.VIBRATOR_SERVICE)`
+- Android 26+: gunakan `VibrationEffect.createOneShot()` atau `createWaveform()`
+- Buat helper object: `util/HapticHelper.kt` dengan fungsi `tapLight()`, `tapMedium()`, `toggleOn()`, `toggleOff()`
+- Permission `VIBRATE` sudah ada di `AndroidManifest.xml`
+
+**TASK 3 — Biometric confirmation saat enable**
+- File: `ui/screen/profile/ProfileScreen.kt`
+- Saat ini: user toggle biometric ON → langsung enable tanpa verifikasi
+- Yang diinginkan: toggle ON → langsung tampilkan `BiometricPrompt` untuk konfirmasi identitas → kalau berhasil baru enable, kalau gagal toggle kembali OFF
+- Referensi implementasi BiometricPrompt: `ui/screen/pin/PinLockScreen.kt` — sudah ada implementasi yang benar
+- Context penting: `MainActivity extends FragmentActivity` (sudah benar)
+- Callback: `onAuthenticationSucceeded` → `viewModel.setBioEnabled(true)`, `onAuthenticationFailed/Error` → tidak enable
+
+**TASK 4 — Language Switch**
+- Toggle ID/EN sudah ada di `ProfileScreen` dan menyimpan `"id"`/`"en"` ke DataStore via `UserPreferences.setLang()`
+- Yang belum ada: implementasi aktual untuk mengganti bahasa app
+- Cara yang direkomendasikan untuk Compose:
+  1. Buat `res/values/strings.xml` (Indonesia, ini default)
+  2. Buat `res/values-en/strings.xml` (English)
+  3. Di `MainActivity.onCreate` atau `Application.attachBaseContext`, baca lang dari DataStore dan set locale dengan `LocaleListCompat`
+  4. Gunakan `AppCompatDelegate.setApplicationLocales()` (AndroidX AppCompat sudah jadi dependency via Material)
+- String yang perlu diterjemahkan: semua label UI di semua screen (minimal Home, Transaksi, Akun, Analisis, Profil)
+- Dependency yang mungkin perlu ditambah: pastikan `androidx.appcompat:appcompat` sudah ada di `libs.versions.toml`
+
+### File-file penting yang perlu dibaca
+```
+ui/screen/pin/PinLockScreen.kt         — referensi custom keypad
+ui/screen/pin/PinViewModel.kt          — referensi verifikasi PIN
+ui/screen/profile/ProfileScreen.kt     — tempat toggle PIN & biometrik
+ui/screen/profile/ProfileViewModel.kt  — fungsi setPinEnabled, setBioEnabled
+ui/navigation/Screen.kt                — tambah PinSetup route di sini
+ui/navigation/NavGraph.kt              — tambah composable PinSetup di sini
+util/SoundManager.kt                   — referensi pattern untuk HapticHelper
+```
+
+### Cara update HANDOFF
+Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN dengan format:
+```
+### YYYY-MM-DD — [Nama Task]
+- Perubahan apa yang dilakukan
+- File apa yang diubah/dibuat
+```
+
+---
+
 ## LOG PERUBAHAN
+
+### 2026-03-21 — Import date/time fix + Loading Overlay
+- **Bug: Waktu Excel numeric cells hilang** — `Row.str()` untuk `DateUtil.isCellDateFormatted` sebelumnya hanya return tanggal (`%04d-%02d-%02d`). Sekarang include waktu (`%04d-%02d-%02d %02d:%02d:%02d`) sehingga `extractTimeFromDateStr` bisa parse jam yang benar.
+- **Bug: Tanggal masa depan (MM/DD ambiguous)** — `parseDate("03/05/2026")` menghasilkan `2026-05-03` (Mei = masa depan) karena `b=5 ≤ 12` tidak bisa dibedakan. Fix: setelah parse, cek apakah hasil > today+7 hari. Kalau ya, coba swap month↔day. Kalau hasil swap valid dan bukan masa depan, gunakan itu.
+- **Loading Overlay** — composable `DompetKuLoadingOverlay` baru di `ProfileScreen.kt`. Muncul saat `isImporting` atau `isExporting` true. Desain DompetKu-branded: logo hijau dengan pulse animation + spinning arc hijau + teks pesan.
+- **HANDOFF** — section "UNTUK GPT CODEX" ditambahkan dengan 4 task lengkap: PIN Setup Screen, Haptics, Biometric confirm, Language Switch.
 
 ### 2026-03-21 — Smart Import Fix Round 2 + Dialog Info Ekspor/Impor
 - **Bug 1 — `[Amount: xxx]` di semua nama transaksi:** Kolom `Amount` (index 8) Money Manager = duplikat IDR, kolom `Description` selalu kosong. Keduanya ditambahkan ke `IGNORED_HEADERS` sehingga tidak masuk `extras` dan tidak mencemari nama transaksi.

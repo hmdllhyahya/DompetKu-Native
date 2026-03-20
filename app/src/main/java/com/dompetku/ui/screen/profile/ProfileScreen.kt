@@ -23,6 +23,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.InfiniteRepeatableSpec
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -373,6 +383,13 @@ fun ProfileScreen(
         hostState = snackbarHostState,
         modifier  = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp),
     )
+
+    // ── Loading overlay (import / export sedang berjalan) ──────────────────
+    if (isImporting || isExporting) {
+        DompetKuLoadingOverlay(
+            message = if (isImporting) "Membaca data..." else "Mengekspor data..."
+        )
+    }
 
     } // end Box
 
@@ -1258,6 +1275,88 @@ private fun SmartInfoBanner(text: String, bg: Color, fg: Color) {
             .padding(10.dp),
     ) {
         Text(text, fontSize = 12.sp, color = fg)
+    }
+}
+
+// ── DompetKu Loading Overlay ───────────────────────────────────────────────────────────
+@Composable
+private fun DompetKuLoadingOverlay(message: String) {
+    // Animated pulsing scale for the logo
+    val infiniteTransition = rememberInfiniteTransition(label = "loading_pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue  = 0.92f,
+        targetValue   = 1.08f,
+        animationSpec = InfiniteRepeatableSpec(
+            animation  = tween(700, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "loading_scale",
+    )
+    val rotation by infiniteTransition.animateFloat(
+        initialValue  = 0f,
+        targetValue   = 360f,
+        animationSpec = InfiniteRepeatableSpec(
+            animation  = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "loading_rotation",
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White.copy(alpha = 0.92f)),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            // Logo + spinning arc
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(88.dp)) {
+                androidx.compose.foundation.Canvas(
+                    modifier = Modifier.fillMaxSize().graphicsLayer { this.rotationZ = rotation }
+                ) {
+                    drawArc(
+                        color      = GreenPrimary,
+                        startAngle = 0f,
+                        sweepAngle = 260f,
+                        useCenter  = false,
+                        style      = Stroke(
+                            width = 4.dp.toPx(),
+                            cap   = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(64.dp)
+                        .graphicsLayer { this.scaleX = scale; this.scaleY = scale }
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.linearGradient(listOf(GreenPrimary, GreenDark))),
+                ) {
+                    com.dompetku.ui.components.DompetKuLogo(
+                        size  = 36.dp,
+                        color = Color.White,
+                    )
+                }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text       = message,
+                    fontSize   = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color      = TextDark,
+                )
+                Text(
+                    text     = "Mohon tunggu sebentar",
+                    fontSize = 12.sp,
+                    color    = TextMedium,
+                )
+            }
+        }
     }
 }
 

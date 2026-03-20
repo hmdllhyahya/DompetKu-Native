@@ -686,14 +686,27 @@ internal object SmartImportEngine {
             val a = parts[0].toIntOrNull() ?: return null
             val b = parts[1].toIntOrNull() ?: return null
             val c = parts[2].take(4).toIntOrNull() ?: return null
-            return when {
-                a > 1900 -> String.format("%04d-%02d-%02d", a, b, c)          // YYYY/MM/DD
+            val candidate = when {
+                a > 1900 -> String.format("%04d-%02d-%02d", a, b, c)           // YYYY/MM/DD
                 c > 1900 && b > 12 -> String.format("%04d-%02d-%02d", c, a, b) // MM/DD/YYYY (b=day>12)
-                c > 1900 -> String.format("%04d-%02d-%02d", c, b, a)          // DD/MM/YYYY
-                a > 31   -> String.format("%04d-%02d-%02d", a + 2000, b, c)   // YY first
-                b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)   // day in middle → MM/DD/YY
-                else     -> String.format("%04d-%02d-%02d", c + 2000, b, a)   // assume DD/MM/YY
+                c > 1900 -> String.format("%04d-%02d-%02d", c, b, a)           // DD/MM/YYYY (ambiguous)
+                a > 31   -> String.format("%04d-%02d-%02d", a + 2000, b, c)    // YY first
+                b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)    // day in middle
+                else     -> String.format("%04d-%02d-%02d", c + 2000, b, a)    // assume DD/MM/YY
             }
+            // Sanity check: if result is suspiciously in the future (>7 days),
+            // try swapping month and day to handle ambiguous MM/DD vs DD/MM.
+            // Example: "03/05/2026" parsed as 2026-05-03 (future) -> swap -> 2026-03-05 (correct).
+            val today = java.time.LocalDate.now()
+            val parsed = runCatching { java.time.LocalDate.parse(candidate) }.getOrNull()
+            if (parsed != null && parsed.isAfter(today.plusDays(7)) && c > 1900) {
+                val swapped = String.format("%04d-%02d-%02d", c, b, a)
+                val swappedDate = runCatching { java.time.LocalDate.parse(swapped) }.getOrNull()
+                if (swappedDate != null && !swappedDate.isAfter(today.plusDays(7))) {
+                    return swapped
+                }
+            }
+            return candidate
         }
         // Month name: "7 Mar 2025" or "Mar 7, 2025"
         val months = mapOf(
@@ -945,8 +958,14 @@ internal object SmartImportEngine {
             CellType.STRING  -> cell.stringCellValue?.trim()?.takeIf { it.isNotBlank() }
             CellType.NUMERIC -> {
                 if (DateUtil.isCellDateFormatted(cell)) {
+                    // Include time component so extractTimeFromDateStr() can pick it up.
+                    // Without this, all imported times would be "00:00".
                     val d = cell.localDateTimeCellValue
-                    String.format("%04d-%02d-%02d", d.year, d.monthValue, d.dayOfMonth)
+                    String.format(
+                        "%04d-%02d-%02d %02d:%02d:%02d",
+                        d.year, d.monthValue, d.dayOfMonth,
+                        d.hour, d.minute, d.second,
+                    )
                 } else {
                     val v = cell.numericCellValue
                     if (v == Math.floor(v)) v.toLong().toString() else v.toString()
