@@ -74,7 +74,8 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     val uiState: StateFlow<AnalyticsUiState> = combine(
-        transactionRepo.observeAll(),
+        // debounce: batch imports won't trigger 100 full recomputes
+        transactionRepo.observeAll().debounce(300),
         userPrefs.appPrefsFlow,
         _filterState,
         _trendMonths,
@@ -138,9 +139,11 @@ class AnalyticsViewModel @Inject constructor(
         }
         val barData = barWeeks.entries.map { BarDatum(it.key, it.value[0], it.value[1]) }
 
-        // ── Lifestyle + salary ────────────────────────────────────────────────
-        val lifestyle     = computeLifestyle(list, totalExp)
-        val salaryInsight = computeSalaryInsight(list, prefs.userProfile.job)
+        // ── Lifestyle + salary (skip if no expense data) ────────────────────
+        // computeLifestyle & computeSalaryInsight do heavy string matching;
+        // guard early so they are not called on every filter toggle.
+        val lifestyle     = if (totalExp > 0) computeLifestyle(list, totalExp) else null
+        val salaryInsight = if (totalExp > 0) computeSalaryInsight(list, prefs.userProfile.job) else null
 
         // ── Monthly trend (last N months, not affected by user filter) ────────
         val monthlyTrend = computeMonthlyTrend(txns, trendMonths)

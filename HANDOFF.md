@@ -14,7 +14,7 @@
 | `Toggle` composable | `onToggle = { }` tanpa parameter (tidak ada `onCheckedChange`) |
 | `TxnUiState.allTxns` | **DIHAPUS** — gunakan `grouped`, `totalCount`, `accountMap` |
 | `filtered(state)` public | **DIHAPUS** dari TransactionsViewModel & AnalyticsViewModel |
-| DB version | `2`, `fallbackToDestructiveMigration()` aktif |
+| DB version | `3`, `fallbackToDestructiveMigration()` aktif |
 | FileProvider authority | `com.dompetku.fileprovider` |
 | Version string | `0.0703.5G` (di ProfileScreen subtitle + build.gradle.kts) |
 | Konvensi versi | `0.MMDD.PHASE` — contoh `0.0703.5G` = 7 Maret, Phase 5G |
@@ -256,6 +256,36 @@ notifEnabled, userProfile: UserProfile
 ---
 
 ## LOG PERUBAHAN
+
+### 2026-03-21 — Smart Import: Money Manager Compatibility
+- **Bug 1 — Date parsing MM/DD/YYYY**: `03/20/2026` diparsing jadi `2026-20-03` (invalid). Fix: cek `b > 12` sebelum `c > 1900` sehingga MM/DD/YYYY ter-detect dengan benar.
+- **Bug 2 — Duplicate "Account" column**: Money Manager export punya dua kolom bernama "Account" (index 1 = nama akun, index 10 = angka amount). Yang kedua masuk ke `extras` dan polusi note dengan `[Account: 43500.0]`. Fix: `detectColumns` skip kolom yang header-nya sudah dipakai role lain.
+- **Bug 3 — Transfer-Out tanpa pasangan**: Money Manager hanya export 1 baris per transfer (Transfer-Out), tidak ada Transfer-In. Kolom Category berisi nama akun TUJUAN. Fix: deteksi `transfer-out` di TYPE column → set `toRawAccountName` dari Category, skip category mapping untuk row ini.
+- **Bug 4 — toRawAccountName tidak di-register**: akun tujuan transfer tidak masuk ke `accountRawNames` sehingga tidak muncul di dialog resolusi. Fix: tambah loop untuk collect `toRawAccountName` ke `accountRawNames`.
+- **Bug 5 — toId tidak di-resolve saat commit**: transfer hanya debit from-account, to-account tidak di-credit. Fix: `commitSmartImport` sekarang resolve `toRawAccountName` ke `toId`, set `fromId`, dan credit balance to-account.
+- **Bug 6 — IDR/rupiah tidak dikenali sebagai AMOUNT**: tambah `"idr","rp","rupiah"` ke ROLE_KEYWORDS AMOUNT.
+- **Bug 7 — Category mapping Money Manager**: tambah mapping untuk `allowance, petty cash, modified bal, household, social life, beauty, data, bensin` ke CATEGORY_MAP.
+- **SmartTransaction**: tambah field `toRawAccountName: String?`
+- **ProfileViewModel.resolveAccountId**: helper baru yang juga fuzzy-match ke akun yang baru di-create, bukan hanya dari `accountResolutions`.
+
+### 2026-03-21 — Smart Notification Fix
+- **Root cause:** Dua masalah yang bikin notifikasi tidak jalan:
+  1. `testNotifications()` pakai `OneTimeWorkRequest` biasa tanpa priority — bisa di-delay lama oleh WorkManager/battery optimization
+  2. Android 13+ wajib `POST_NOTIFICATIONS` runtime permission — tidak pernah di-request, jadi notifikasi selalu di-block OS
+- **Fix 1 — testNotifications():** Tambah `.setExpedited(RUN_AS_NON_EXPEDITED_WORK_REQUEST)` agar WorkManager jalankan segera
+- **Fix 2 — ReminderWorker:** Tambah `getForegroundInfo()` override (wajib untuk Expedited workers)
+- **Fix 3 — ProfileScreen toggle:** Saat user ON-kan Pengingat Harian di Android 13+, sekarang muncul dialog izin notifikasi dari OS sebelum enable. Android 12 ke bawah langsung enable tanpa dialog.
+- **Cara test setelah fix:** Profil → TENTANG → [DEBUG] Test Notifikasi → 5 notifikasi harusnya muncul dalam 5–10 detik
+
+### 2026-03-21 — Performance Audit & Fixes
+- **DB v3:** `AppDatabase.version` naik ke 3 — indexes sudah ada di entity (`@Entity indices`) tapi version belum di-bump, sekarang fixed
+- **AccountsViewModel:** hapus `allTransactions: StateFlow` yang buang-buang RAM — ganti dengan `suspend fun txnCountForAccount(id)` yang query DB count langsung. `AccountsScreen` pakai `LaunchedEffect` + `mutableIntStateOf` untuk load count on-demand saat delete dialog muncul.
+- **TransactionDao:** tambah `countByAccount(accountId): Int` query
+- **TransactionRepository:** tambah `countByAccount(accountId): Int` delegate
+- **AnalyticsViewModel:** tambah `debounce(300)` pada `observeAll()` — batch import tidak lagi trigger 100+ recompute. Guard `computeLifestyle` & `computeSalaryInsight` dengan `if (totalExp > 0)` — tidak jalan saat data kosong atau filter menghasilkan 0 pengeluaran.
+- **TransactionsViewModel:** hapus `sortedByDescending { date + time }` di `applyFilters()` — DAO sudah `ORDER BY date DESC, time DESC`, sort ulang di Kotlin tidak perlu (O(n log n) dihilangkan).
+- **AccountsScreen — jiggle:** pindah `rememberInfiniteTransition` ke dalam `if (editMode)` branch — animasi Choreographer tidak berjalan saat user cuma browse akun.
+- **TransactionsScreen:** ganti `forEach { item(...) item(...) }` dengan `items(state.grouped, key = { "grp_$date" })` — LazyColumn sekarang benar-benar virtualize per group tanggal.
 
 ### 2026-03-07 — Phase 5A
 - AccountFormSheet, TransactionFormSheet, AccountsScreen, BrandDetector, PinLockScreen, ProfileScreen

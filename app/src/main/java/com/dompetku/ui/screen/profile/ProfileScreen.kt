@@ -1,6 +1,8 @@
 package com.dompetku.ui.screen.profile
 
+import android.Manifest
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
@@ -83,6 +85,15 @@ fun ProfileScreen(
     var smartImportPreview   by remember { mutableStateOf<SmartImportResult?>(null) }
     var snackbarMessage      by remember { mutableStateOf<String?>(null) }
     val snackbarHostState    = remember { SnackbarHostState() }
+
+    // POST_NOTIFICATIONS permission launcher (Android 13+)
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Enable notification regardless — if denied, notifications just won't show
+        // but the toggle state is saved so user can try again
+        viewModel.setNotifEnabled(granted)
+    }
 
     // Import file picker — uses smart import
     val importLauncher = rememberLauncherForActivityResult(
@@ -264,7 +275,23 @@ fun ProfileScreen(
                     icon = PhosphorIcons.Regular.Bell, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
                     title = "Pengingat Harian",
                     subtitle = "Budget harian + ringkasan (5 notifikasi/hari)",
-                    rightContent = { Toggle(checked = prefs.notifEnabled, onToggle = { viewModel.setNotifEnabled(!prefs.notifEnabled) }) },
+                    rightContent = {
+                        Toggle(
+                            checked  = prefs.notifEnabled,
+                            onToggle = {
+                                if (!prefs.notifEnabled) {
+                                    // Android 13+: request POST_NOTIFICATIONS before enabling
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        viewModel.setNotifEnabled(true)
+                                    }
+                                } else {
+                                    viewModel.setNotifEnabled(false)
+                                }
+                            }
+                        )
+                    },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(

@@ -43,6 +43,20 @@ class ReminderWorker @AssistedInject constructor(
     private val txnRepo: TransactionRepository,
 ) : CoroutineWorker(context, workerParams) {
 
+    /**
+     * Required for setExpedited() — provides a foreground service notification
+     * as fallback on older Android versions that need it.
+     */
+    override suspend fun getForegroundInfo(): androidx.work.ForegroundInfo {
+        val notif = androidx.core.app.NotificationCompat.Builder(context, DompetKuApp.CHANNEL_BUDGET_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("DompetKu")
+            .setContentText("Menyiapkan notifikasi...")
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .build()
+        return androidx.work.ForegroundInfo(9999, notif)
+    }
+
     override suspend fun doWork(): Result {
         val prefs = userPrefs.appPrefsFlow.first()
         if (!prefs.notifEnabled) return Result.success()

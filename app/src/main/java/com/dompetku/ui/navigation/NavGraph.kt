@@ -77,7 +77,11 @@ fun DompetKuNavHost(
             val txnVm: TransactionsViewModel     = hiltViewModel()
 
             val accounts     by accountsVm.accounts.collectAsStateWithLifecycle()
-            val allTxns      by accountsVm.transactions.collectAsStateWithLifecycle()
+            // allTxns: sourced from TransactionsViewModel — AccountsViewModel no longer holds full txn list
+            val txnUiState   by txnVm.uiState.collectAsStateWithLifecycle()
+            val allTxns      = remember(txnUiState.grouped) {
+                txnUiState.grouped.flatMap { (_, txns) -> txns }
+            }
             val rootPrefs    by rootViewModel.prefs.collectAsStateWithLifecycle()
 
             MainScaffold(
@@ -135,8 +139,13 @@ fun DompetKuNavHost(
         composable(Screen.AccountDetail.route) { backStack ->
             val accountId = backStack.arguments?.getString(Screen.AccountDetail.ARG) ?: return@composable
             val accountsVm: AccountsViewModel = hiltViewModel()
+            val txnVm: TransactionsViewModel  = hiltViewModel()
             val accounts  by accountsVm.accounts.collectAsStateWithLifecycle()
-            val allTxns   by accountsVm.transactions.collectAsStateWithLifecycle()
+            // allTxns for account detail — sourced from TransactionsViewModel
+            val txnState  by txnVm.uiState.collectAsStateWithLifecycle()
+            val allTxns   = remember(txnState.grouped) {
+                txnState.grouped.flatMap { (_, txns) -> txns }
+            }
             var editTarget by remember { mutableStateOf<com.dompetku.domain.model.Account?>(null) }
 
             val account  = accounts.find { it.id == accountId } ?: return@composable

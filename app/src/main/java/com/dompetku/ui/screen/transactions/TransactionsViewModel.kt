@@ -199,7 +199,8 @@ class TransactionsViewModel @Inject constructor(
         val monthStart = today.substring(0, 7) + "-01"
         val weekStart  = java.time.LocalDate.now().minusDays(6).toString()
 
-        var list = txns.sortedByDescending { it.date + it.time }
+        // txns dari DAO sudah ORDER BY date DESC, time DESC — tidak perlu sort ulang
+        var list = txns
         list = when (f.type) {
             TypeFilter.INCOME   -> list.filter { it.type == TransactionType.income }
             TypeFilter.EXPENSE  -> list.filter { it.type == TransactionType.expense }

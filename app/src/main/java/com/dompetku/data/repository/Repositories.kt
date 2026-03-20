@@ -47,6 +47,7 @@ class TransactionRepository @Inject constructor(
     suspend fun delete(id: String)                 { dao.deleteById(id) }
     suspend fun deleteAll()                        { dao.deleteAll() }
     suspend fun deleteByAccount(accountId: String) { dao.deleteByAccount(accountId) }
+    suspend fun countByAccount(accountId: String): Int = dao.countByAccount(accountId)
 
     /** Records a balance adjustment as a synthetic income/expense transaction */
     suspend fun recordBalanceAdjustment(accountId: String, accountName: String, delta: Long) {

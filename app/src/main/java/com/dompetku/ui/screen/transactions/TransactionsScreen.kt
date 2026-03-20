@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -283,38 +284,34 @@ fun TransactionsScreen(
                 }
             }
         } else {
-            state.grouped.forEach { (date, txns) ->
+            // Use items() with stable keys so LazyColumn properly virtualises each group
+            items(state.grouped, key = { (date, _) -> "grp_$date" }) { (date, txns) ->
                 val dayInc = txns.filter { it.type == TransactionType.income  && it.category != "Penyesuaian Saldo" }.sumOf { it.amount }
                 val dayExp = txns.filter { it.type == TransactionType.expense && it.category != "Penyesuaian Saldo" }.sumOf { it.amount }
-
-                item(key = "hdr_$date") {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                        DateGroupHeader(dateStr = date, income = dayInc, expense = dayExp)
-                    }
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    DateGroupHeader(dateStr = date, income = dayInc, expense = dayExp)
                 }
-                item(key = "grp_$date") {
-                    WhiteCard(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp),
-                        padding  = 0.dp,
-                    ) {
-                        txns.forEachIndexed { i, txn ->
-                            val acc   = state.accountMap[txn.accountId]
-                            val toAcc = txn.toId?.let { state.accountMap[it] }
-                            TransactionRow(
-                                note          = txn.note,
-                                category      = txn.category,
-                                accountName   = acc?.name ?: "?",
-                                toAccountName = toAcc?.name,
-                                date          = txn.date,
-                                time          = txn.time,
-                                type          = txn.type,
-                                amount        = txn.amount,
-                                autoDetected  = txn.detected == true,
-                                hidden        = state.hidden,
-                                isLast        = i == txns.lastIndex,
-                                onClick       = { onTxnClick(txn) },
-                            )
-                        }
+                WhiteCard(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp),
+                    padding  = 0.dp,
+                ) {
+                    txns.forEachIndexed { i, txn ->
+                        val acc   = state.accountMap[txn.accountId]
+                        val toAcc = txn.toId?.let { state.accountMap[it] }
+                        TransactionRow(
+                            note          = txn.note,
+                            category      = txn.category,
+                            accountName   = acc?.name ?: "?",
+                            toAccountName = toAcc?.name,
+                            date          = txn.date,
+                            time          = txn.time,
+                            type          = txn.type,
+                            amount        = txn.amount,
+                            autoDetected  = txn.detected == true,
+                            hidden        = state.hidden,
+                            isLast        = i == txns.lastIndex,
+                            onClick       = { onTxnClick(txn) },
+                        )
                     }
                 }
             }

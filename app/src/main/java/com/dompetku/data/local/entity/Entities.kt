@@ -11,7 +11,15 @@ import com.dompetku.domain.model.Transaction
 import com.dompetku.domain.model.TransactionType
 
 // ── TransactionEntity ─────────────────────────────────────────────────────────
-@Entity(tableName = "transactions")
+@Entity(
+    tableName = "transactions",
+    indices = [
+        Index("date"),                        // ORDER BY date DESC, range queries
+        Index("accountId"),                   // observeByAccount, delete cascade
+        Index("type"),                        // type filter
+        Index(value = ["date", "type"]),      // analytics: type+date combined
+    ],
+)
 data class TransactionEntity(
     @PrimaryKey val id:            String,
     val type:          String,          // TransactionType name

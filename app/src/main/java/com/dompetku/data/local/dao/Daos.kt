@@ -46,6 +46,10 @@ interface TransactionDao {
     @Query("DELETE FROM transactions")
     suspend fun deleteAll()
 
+    /** Lightweight count — used by AccountsScreen delete-confirm dialog */
+    @Query("SELECT COUNT(*) FROM transactions WHERE accountId = :accountId")
+    suspend fun countByAccount(accountId: String): Int
+
     @Query("SELECT SUM(amount) FROM transactions WHERE type = :type AND date BETWEEN :from AND :to")
     suspend fun sumByTypeAndDateRange(type: String, from: String, to: String): Long?
 

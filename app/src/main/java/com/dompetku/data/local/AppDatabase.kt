@@ -11,7 +11,7 @@ import com.dompetku.data.local.entity.TransactionEntity
 
 @Database(
     entities  = [TransactionEntity::class, AccountEntity::class, AttachmentEntity::class],
-    version   = 2,
+    version   = 3,   // v3: added indexes on transactions(date, accountId, type, date+type)
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

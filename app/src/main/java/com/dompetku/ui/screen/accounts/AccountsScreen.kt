@@ -199,8 +199,10 @@ fun AccountsScreen(
     }
 
     deleteTarget?.let { target ->
-        val txnCount = remember(target) {
-            viewModel.transactions.value.count { it.accountId == target.id }
+        // Load count once from DB (suspend, no full list in RAM)
+        var txnCount by remember(target) { mutableIntStateOf(0) }
+        LaunchedEffect(target.id) {
+            txnCount = viewModel.txnCountForAccount(target.id)
         }
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
@@ -237,17 +239,21 @@ private fun AccountCard(
     onMoveBack:    () -> Unit = {},
     onMoveForward: () -> Unit = {},
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "jiggle")
-    val jiggleAngle by infiniteTransition.animateFloat(
-        initialValue = -1.5f,
-        targetValue  =  1.5f,
-        animationSpec = InfiniteRepeatableSpec(
-            animation  = tween(100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "jiggleAngle",
-    )
-    val rotation = if (editMode) jiggleAngle + (if (accIndex % 2 == 0) -0.5f else 0.5f) else 0f
+    // Only run InfiniteTransition when actually in edit mode — saves Choreographer
+    // callbacks on every account card when user is just browsing.
+    val rotation = if (editMode) {
+        val infiniteTransition = rememberInfiniteTransition(label = "jiggle")
+        val jiggleAngle by infiniteTransition.animateFloat(
+            initialValue  = -1.5f,
+            targetValue   =  1.5f,
+            animationSpec = InfiniteRepeatableSpec(
+                animation  = tween(100, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "jiggleAngle",
+        )
+        jiggleAngle + (if (accIndex % 2 == 0) -0.5f else 0.5f)
+    } else 0f
 
     Column(
         modifier = modifier

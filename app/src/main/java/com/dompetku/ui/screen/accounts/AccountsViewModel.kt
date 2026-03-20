@@ -6,7 +6,6 @@ import com.dompetku.data.preferences.UserPreferences
 import com.dompetku.data.repository.AccountRepository
 import com.dompetku.data.repository.TransactionRepository
 import com.dompetku.domain.model.Account
-import com.dompetku.domain.model.Transaction
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -29,8 +28,9 @@ class AccountsViewModel @Inject constructor(
     val accounts: StateFlow<List<Account>> = accountRepo.allAccounts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val transactions: StateFlow<List<Transaction>> = transactionRepo.allTransactions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Lightweight DB count — called on-demand in delete dialog, avoids keeping full txn list in RAM */
+    suspend fun txnCountForAccount(accountId: String): Int =
+        transactionRepo.countByAccount(accountId)
 
     val totalBalance: StateFlow<Long> = accounts
         .map { it.sumOf { acc -> acc.balance } }

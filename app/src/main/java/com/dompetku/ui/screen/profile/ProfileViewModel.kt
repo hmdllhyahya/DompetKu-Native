@@ -154,18 +154,46 @@ class ProfileViewModel @Inject constructor(
                     }
                 }
 
+                // Snapshot of all currently existing accounts for fuzzy-matching toRawAccountName
+                val existingAccountsSnap = accountRepo.observeAll().first()
+
+                // Helper: resolve a raw account name to its DB id
+                fun resolveAccountId(rawName: String): String? {
+                    val res = accountResolutions[rawName]
+                    return when (res) {
+                        is AccountResolution.UseExisting -> res.account.id
+                        is AccountResolution.CreateNew   -> createdIds[rawName]
+                        is AccountResolution.Skip, null  -> {
+                            // Fuzzy fallback: match against existing + newly created
+                            val allAccounts = existingAccountsSnap +
+                                createdIds.entries.map { (name, id) ->
+                                    com.dompetku.domain.model.Account(
+                                        id = id, type = AccountType.other,
+                                        name = name, balance = 0L,
+                                        gradientStart = 0L, gradientEnd = 0L,
+                                    )
+                                }
+                            val (match, score) = com.dompetku.util.SmartImportEngine
+                                .matchAccount(rawName, allAccounts)
+                            if (score >= 0.5f) match?.id else null
+                        }
+                    }
+                }
+
                 // Insert transactions + accumulate net balance per accountId
                 val balanceDelta = mutableMapOf<String, Long>()
                 var txnCount  = 0
                 var skipCount = 0
                 for (st in result.transactions) {
-                    val resolution = accountResolutions[st.rawAccountName]
-                    val accountId  = when (resolution) {
-                        is AccountResolution.UseExisting -> resolution.account.id
-                        is AccountResolution.CreateNew   -> createdIds[st.rawAccountName]
-                        is AccountResolution.Skip, null  -> null
-                    }
+                    val accountId = resolveAccountId(st.rawAccountName)
                     if (accountId == null) { skipCount++; continue }
+
+                    // Resolve toId for transfer transactions (Transfer-Out with toRawAccountName)
+                    val toId = if (st.suggestedType == TransactionType.transfer &&
+                        st.toRawAccountName != null) {
+                        resolveAccountId(st.toRawAccountName)
+                    } else null
+
                     runCatching {
                         transactionRepo.insert(
                             Transaction(
@@ -177,19 +205,26 @@ class ProfileViewModel @Inject constructor(
                                 date      = st.date,
                                 time      = st.time,
                                 accountId = accountId,
+                                fromId    = if (st.suggestedType == TransactionType.transfer) accountId else null,
+                                toId      = toId,
                                 detected  = if (st.detected) true else null,
                             )
                         )
                         // Accumulate balance delta:
-                        //   income   → +amount
-                        //   expense  → -amount
-                        //   transfer → -amount (accountId = from account)
+                        //   income   → +amount to accountId
+                        //   expense  → -amount from accountId
+                        //   transfer → -amount from accountId (from-account)
+                        //             +amount to toId (to-account, if resolved)
                         val delta = when (st.suggestedType) {
                             TransactionType.income   -> +st.amount
                             TransactionType.expense  -> -st.amount
                             TransactionType.transfer -> -st.amount
                         }
                         balanceDelta[accountId] = (balanceDelta[accountId] ?: 0L) + delta
+                        // Credit the to-account for transfers
+                        if (st.suggestedType == TransactionType.transfer && toId != null) {
+                            balanceDelta[toId] = (balanceDelta[toId] ?: 0L) + st.amount
+                        }
                         txnCount++
                     }
                 }
@@ -333,12 +368,17 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    /** DEBUG ONLY — fire all 5 notification slots immediately via OneTimeWorkRequest */
+    /**
+     * DEBUG ONLY — fire all 5 notification slots immediately.
+     * Uses OneTimeWorkRequest with EXPEDITED priority so WorkManager runs it
+     * right away without waiting for battery/network constraints.
+     */
     fun testNotifications() {
         val wm = androidx.work.WorkManager.getInstance(app)
         (0..4).forEach { slot ->
             val req = androidx.work.OneTimeWorkRequestBuilder<ReminderWorker>()
                 .setInputData(androidx.work.workDataOf("slot" to slot))
+                .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             wm.enqueue(req)
         }

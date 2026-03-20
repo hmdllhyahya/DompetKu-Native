@@ -42,17 +42,18 @@ data class SmartImportResult(
 )
 
 data class SmartTransaction(
-    val tempId:           String,
-    val suggestedType:    TransactionType,
-    val amount:           Long,
-    val category:         String,
-    val originalCategory: String,
-    val note:             String,
-    val date:             String,
-    val time:             String,
-    val rawAccountName:   String,
-    val wasSignFlipped:   Boolean,
-    val detected:         Boolean = false,  // true = SmartCategoryDetector matched
+    val tempId:             String,
+    val suggestedType:      TransactionType,
+    val amount:             Long,
+    val category:           String,
+    val originalCategory:   String,
+    val note:               String,
+    val date:               String,
+    val time:               String,
+    val rawAccountName:     String,
+    val toRawAccountName:   String?  = null,  // for Transfer-Out: category = destination account
+    val wasSignFlipped:     Boolean  = false,
+    val detected:           Boolean  = false, // true = SmartCategoryDetector matched
 )
 
 data class DetectedAccount(
@@ -363,6 +364,10 @@ class ExportImportManager @Inject constructor(
                         transactions.add(txn)
                         accountRawNames[txn.rawAccountName] =
                             (accountRawNames[txn.rawAccountName] ?: 0) + 1
+                        // Also register the destination account for Transfer-Out rows
+                        txn.toRawAccountName?.let { toName ->
+                            accountRawNames[toName] = (accountRawNames[toName] ?: 0) + 1
+                        }
                         if (txn.wasSignFlipped) autoSignCount++
                         if (txn.note.contains("[") && txn.note.contains(": ")) extraFieldCount++
                         rowCount++
@@ -453,7 +458,7 @@ internal object SmartImportEngine {
     private val ROLE_KEYWORDS: Map<Role, Set<String>> = mapOf(
         Role.DATE     to setOf("date","tanggal","tgl","waktu","datetime","created","timestamp","created_at"),
         Role.TIME     to setOf("time","jam","hour","pukul"),
-        Role.AMOUNT   to setOf("amount","nominal","jumlah","total","nilai","uang","harga","money","sum"),
+        Role.AMOUNT   to setOf("amount","nominal","jumlah","total","nilai","uang","harga","money","sum","idr","rp","rupiah"),
         Role.DEBIT    to setOf("debit","expense","pengeluaran","keluar","out","minus","withdraw","spent","debet"),
         Role.CREDIT   to setOf("credit","income","pemasukan","masuk","in","plus","deposit","received","kredit"),
         Role.CATEGORY to setOf("category","kategori","kat","grup","group","subcategory","class"),
@@ -503,11 +508,15 @@ internal object SmartImportEngine {
         }
 
         val hasDebitCredit = assigned.containsKey(Role.DEBIT) && assigned.containsKey(Role.CREDIT)
-        val extras = (0 until n).filter { it !in claimed }
-            .associateWith { i ->
-                headerRow.getCell(i)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() }
-                    ?: "Kolom${i + 1}"
-            }
+        // Track headers already used by an assigned role — skip duplicate-named columns in extras
+        // e.g. Money Manager exports two "Account" columns; the second one contains amounts, not names
+        val assignedHeaders = assigned.values.map { idx -> headers[idx] }.toSet()
+        val extras = (0 until n).filter { i ->
+            i !in claimed && headers[i] !in assignedHeaders
+        }.associateWith { i ->
+            headerRow.getCell(i)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() }
+                ?: "Kolom${i + 1}"
+        }
 
         return ColumnMap(
             date     = assigned[Role.DATE],
@@ -531,6 +540,12 @@ internal object SmartImportEngine {
         val type:   TransactionType
         var wasSignFlipped = false
 
+        // Read the raw TYPE string early — needed for Money Manager Transfer-Out detection
+        val rawTypeStr = colMap.txnType?.let { row.str(it) }?.lowercase()?.trim() ?: ""
+        // Money Manager Transfer-Out: one-sided transfer row where Category = destination account
+        val isMoneyManagerTransferOut = rawTypeStr == "transfer-out" || rawTypeStr == "transfer out"
+        val isMoneyManagerTransferIn  = rawTypeStr == "transfer-in"  || rawTypeStr == "transfer in"
+
         if (colMap.debit != null && colMap.credit != null) {
             val dv = row.dbl(colMap.debit)  ?: 0.0
             val cv = row.dbl(colMap.credit) ?: 0.0
@@ -548,10 +563,11 @@ internal object SmartImportEngine {
                 wasSignFlipped = true
             } else {
                 amount = rawAmt.toLong()
-                val ts = colMap.txnType?.let { row.str(it) }?.lowercase()?.trim()
-                    ?.takeIf { it != "-" && it != "—" }  // treat dash as null
+                val ts = rawTypeStr.takeIf { it.isNotBlank() && it != "-" && it != "—" }
                 val rawCatForType = colMap.category?.let { row.str(it) }?.lowercase()?.trim() ?: ""
                 type = when {
+                    // Money Manager explicit Transfer-Out / Transfer-In
+                    isMoneyManagerTransferOut || isMoneyManagerTransferIn -> TransactionType.transfer
                     // Explicit TYPE column values
                     ts != null && ts in setOf("expense","pengeluaran","keluar","out","debit","e","dr","expenses") ->
                         TransactionType.expense
@@ -582,6 +598,15 @@ internal object SmartImportEngine {
             ?.let { if (it == "-" || it == "—") null else it }
             ?.ifBlank { null } ?: "Akun Impor"
 
+        // Money Manager Transfer-Out: Category column = destination account name, NOT a category
+        // Strip emoji from category before using as account name (e.g. "\uD83D\uDCB3 GoPay" → "GoPay")
+        val toRawAccountName: String? = when {
+            isMoneyManagerTransferOut -> rawCategory
+                .replace(Regex("[\\p{So}\\p{Sm}\\p{Sc}\\p{Sk}\\p{Cs}]+"), "")
+                .trim().takeIf { it.isNotBlank() }
+            else -> null
+        }
+
         val extraParts = colMap.extras.mapNotNull { (ci, hdr) ->
             // BUG-03 fix: skip kolom yang ada di ignore list
             if (IGNORED_HEADERS.any { hdr.lowercase().trim() == it || hdr.lowercase().trim().contains(it) })
@@ -610,10 +635,11 @@ internal object SmartImportEngine {
         // Deteksi dijalankan terhadap nama transaksi, bukan catatan
         val sourceForDetection = rawTxnName.ifBlank { fullNote }
         val detectionResult    = SmartCategoryDetector.detect(sourceForDetection)
-        val mappedCategory     = mapCategory(rawCategory)
+        // Transfer-Out Money Manager: jangan map rawCategory sebagai kategori — itu nama akun tujuan
+        val mappedCategory     = if (toRawAccountName != null) "Transfer" else mapCategory(rawCategory)
         val finalCategory: String
         val isDetected: Boolean
-        if (detectionResult != null) {
+        if (toRawAccountName == null && detectionResult != null) {
             // SmartCategoryDetector menang jika:
             // - kategori asli tidak ada (kosong / Lainnya), ATAU
             // - confidence tinggi (≥ 0.7)
@@ -626,17 +652,18 @@ internal object SmartImportEngine {
         }
 
         return SmartTransaction(
-            tempId           = "imp_${rowIdx}_${System.currentTimeMillis()}",
-            suggestedType    = type,
-            amount           = amount,
-            category         = finalCategory,
-            originalCategory = rawCategory,
-            note             = fullNote,
-            date             = parsedDate,
-            time             = parsedTime,
-            rawAccountName   = rawAccount.trim(),
-            wasSignFlipped   = wasSignFlipped,
-            detected         = isDetected,
+            tempId             = "imp_${rowIdx}_${System.currentTimeMillis()}",
+            suggestedType      = type,
+            amount             = amount,
+            category           = finalCategory,
+            originalCategory   = rawCategory,
+            note               = fullNote,
+            date               = parsedDate,
+            time               = parsedTime,
+            rawAccountName     = rawAccount.trim(),
+            toRawAccountName   = toRawAccountName,
+            wasSignFlipped     = wasSignFlipped,
+            detected           = isDetected,
         )
     }
 
@@ -655,10 +682,11 @@ internal object SmartImportEngine {
             val b = parts[1].toIntOrNull() ?: return null
             val c = parts[2].take(4).toIntOrNull() ?: return null
             return when {
-                c > 1900 -> String.format("%04d-%02d-%02d", c, b, a)          // DD/MM/YYYY
                 a > 1900 -> String.format("%04d-%02d-%02d", a, b, c)          // YYYY/MM/DD
+                c > 1900 && b > 12 -> String.format("%04d-%02d-%02d", c, a, b) // MM/DD/YYYY (b=day>12)
+                c > 1900 -> String.format("%04d-%02d-%02d", c, b, a)          // DD/MM/YYYY
                 a > 31   -> String.format("%04d-%02d-%02d", a + 2000, b, c)   // YY first
-                b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)   // day in middle
+                b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)   // day in middle → MM/DD/YY
                 else     -> String.format("%04d-%02d-%02d", c + 2000, b, a)   // assume DD/MM/YY
             }
         }
@@ -783,6 +811,24 @@ internal object SmartImportEngine {
         "invest" to "Investasi","investasi" to "Investasi","dividend" to "Investasi",
         "dividen" to "Investasi","profit" to "Investasi","saham" to "Investasi",
         "stock" to "Investasi","reksadana" to "Investasi",
+        // Money Manager — Allowance / Petty cash / Bonus categories
+        "allowance" to "Gaji","uang saku" to "Gaji","tunjangan" to "Gaji",
+        "petty cash" to "Gaji","petty" to "Gaji",
+        "sim" to "Gaji",   // Money Manager 💳 SIM = kartu / transpor, treat as transport
+        // Money Manager balance adjustment
+        "modified bal" to "Penyesuaian Saldo","modified balance" to "Penyesuaian Saldo",
+        "opening balance" to "Penyesuaian Saldo","initial balance" to "Penyesuaian Saldo",
+        "saldo awal" to "Penyesuaian Saldo","penyesuaian" to "Penyesuaian Saldo",
+        // Household
+        "household" to "Tempat Tinggal","rumah tangga" to "Tempat Tinggal",
+        // Social
+        "social" to "Hiburan","social life" to "Hiburan","sosial" to "Hiburan",
+        // Beauty
+        "beauty" to "Perawatan",
+        // Data / SIM
+        "data" to "Tagihan","paket data" to "Tagihan",
+        // Bensin
+        "bensin" to "Transportasi",
     )
 
     // BUG-04: Detect dan merge pasangan Transfer In/Out dari Money Manager
