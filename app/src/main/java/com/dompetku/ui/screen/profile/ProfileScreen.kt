@@ -81,6 +81,8 @@ fun ProfileScreen(
     // Export/Import state
     var isExporting          by remember { mutableStateOf(false) }
     var isImporting          by remember { mutableStateOf(false) }
+    var showExportInfoDialog by remember { mutableStateOf(false) }
+    var showImportInfoDialog by remember { mutableStateOf(false) }
     var importPreview        by remember { mutableStateOf<ImportResult?>(null) }
     var smartImportPreview   by remember { mutableStateOf<SmartImportResult?>(null) }
     var snackbarMessage      by remember { mutableStateOf<String?>(null) }
@@ -313,12 +315,7 @@ fun ProfileScreen(
                     iconTint = Color(0xFF3B82F6),
                     title    = "Ekspor Data",
                     subtitle = if (isExporting) "Sedang mengekspor..." else "Simpan ke XLSX",
-                    onClick  = {
-                        if (!isExporting) {
-                            isExporting = true
-                            viewModel.triggerExport()
-                        }
-                    },
+                    onClick  = { if (!isExporting) showExportInfoDialog = true },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
@@ -326,10 +323,8 @@ fun ProfileScreen(
                     iconBg   = Color(0xFFD1FAE5),
                     iconTint = GreenPrimary,
                     title    = "Impor Data",
-                    subtitle = if (isImporting) "Membaca file..." else "Muat dari XLSX",
-                    onClick  = {
-                        if (!isImporting) importLauncher.launch("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                    },
+                    subtitle = if (isImporting) "Membaca file..." else "Muat dari Money Manager XLSX",
+                    onClick  = { if (!isImporting) showImportInfoDialog = true },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
@@ -438,6 +433,33 @@ fun ProfileScreen(
     // ── Change PIN sheet ──────────────────────────────────────────────────────
     if (showPinSheet) {
         ChangePinSheet(onDismiss = { showPinSheet = false }, onSave = { viewModel.setPinHash(PinHasher.hash(it)); showPinSheet = false })
+    }
+
+    // ── Export info dialog ─────────────────────────────────────────────────────
+    if (showExportInfoDialog) {
+        ExportInfoDialog(
+            txnCount  = state.txnCount,
+            accCount  = state.accountCount,
+            onDismiss = { showExportInfoDialog = false },
+            onExport  = {
+                showExportInfoDialog = false
+                isExporting = true
+                viewModel.triggerExport()
+            },
+        )
+    }
+
+    // ── Import info dialog ─────────────────────────────────────────────────────
+    if (showImportInfoDialog) {
+        ImportInfoDialog(
+            onDismiss    = { showImportInfoDialog = false },
+            onPickFile   = {
+                showImportInfoDialog = false
+                importLauncher.launch(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            },
+        )
     }
 
     // ── Delete confirm ────────────────────────────────────────────────────────
@@ -1236,5 +1258,227 @@ private fun SmartInfoBanner(text: String, bg: Color, fg: Color) {
             .padding(10.dp),
     ) {
         Text(text, fontSize = 12.sp, color = fg)
+    }
+}
+
+// ── Export Info Dialog ─────────────────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExportInfoDialog(
+    txnCount:  Int,
+    accCount:  Int,
+    onDismiss: () -> Unit,
+    onExport:  () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState       = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor   = PageBg,
+        shape            = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(top = 4.dp, bottom = 24.dp),
+        ) {
+            // Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(bottom = 16.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFDBEAFE)),
+                ) {
+                    Icon(PhosphorIcons.Regular.ArrowSquareOut, null,
+                        tint = Color(0xFF3B82F6), modifier = Modifier.size(22.dp))
+                }
+                Column {
+                    Text("Ekspor Data", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text("Format XLSX · 2 sheet", fontSize = 12.sp, color = TextMedium)
+                }
+            }
+
+            // Data summary
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 14.dp)) {
+                Box(
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFDBEAFE)).padding(12.dp),
+                ) {
+                    Column {
+                        Text("$txnCount", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Color(0xFF3B82F6))
+                        Text("transaksi", fontSize = 11.sp, color = TextMedium)
+                    }
+                }
+                Box(
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                        .background(GreenLight).padding(12.dp),
+                ) {
+                    Column {
+                        Text("$accCount", fontSize = 22.sp, fontWeight = FontWeight.Black, color = GreenPrimary)
+                        Text("akun", fontSize = 11.sp, color = TextMedium)
+                    }
+                }
+            }
+
+            // Info rows
+            InfoRow(icon = PhosphorIcons.Regular.Table, text = "Sheet \"Transaksi\": Tanggal, Waktu, Jenis, Nominal, Nama, Kategori, Akun, Transfer, Biaya Admin")
+            InfoRow(icon = PhosphorIcons.Regular.CreditCard, text = "Sheet \"Akun\": Nama, Tipe, Saldo, Nomor Akhir, Brand")
+            InfoRow(icon = PhosphorIcons.Regular.ShareNetwork, text = "File langsung dibagikan via sistem berbagi HP (WhatsApp, email, Drive, dll.)")
+
+            // Disclaimer
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFFEF3C7))
+                    .padding(12.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(PhosphorIcons.Regular.Warning, null,
+                        tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
+                    Text(
+                        "File ekspor menggunakan format DompetKu. Untuk impor kembali ke DompetKu, " +
+                        "gunakan file ini langsung. Format ini berbeda dengan format Money Manager.",
+                        fontSize = 12.sp, color = Color(0xFF92400E), lineHeight = 18.sp,
+                    )
+                }
+            }
+
+            // Buttons
+            Button(
+                onClick  = onExport,
+                modifier = Modifier.fillMaxWidth(),
+                shape    = RoundedCornerShape(14.dp),
+                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
+            ) {
+                Icon(PhosphorIcons.Regular.ArrowSquareOut, null,
+                    modifier = Modifier.size(16.dp).padding(end = 0.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Ekspor Sekarang", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Batal", color = TextMedium)
+            }
+        }
+    }
+}
+
+// ── Import Info Dialog ─────────────────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ImportInfoDialog(
+    onDismiss:  () -> Unit,
+    onPickFile: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState       = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor   = PageBg,
+        shape            = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(top = 4.dp, bottom = 24.dp),
+        ) {
+            // Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(bottom = 16.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(GreenLight),
+                ) {
+                    Icon(PhosphorIcons.Regular.ArrowSquareIn, null,
+                        tint = GreenPrimary, modifier = Modifier.size(22.dp))
+                }
+                Column {
+                    Text("Impor Data", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text("Dari Money Manager · Format XLSX", fontSize = 12.sp, color = TextMedium)
+                }
+            }
+
+            // Format yang didukung
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(GreenLight).padding(12.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("FORMAT YANG DIDUKUNG", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                        color = GreenPrimary, letterSpacing = 0.5.sp)
+                    Text("✓  Money Manager (Export → Excel/CSV)",
+                        fontSize = 12.sp, color = TextDark, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            // Info rows
+            InfoRow(icon = PhosphorIcons.Regular.Calendar, text = "Kolom Date, Account, Category, Note, IDR/Amount, Income/Expense otomatis dikenali")
+            InfoRow(icon = PhosphorIcons.Regular.ArrowsLeftRight, text = "Transfer-Out akan dikenali sebagai Transfer antar akun")
+            InfoRow(icon = PhosphorIcons.Regular.Tag, text = "Kategori Money Manager otomatis dipetakan ke kategori DompetKu")
+            InfoRow(icon = PhosphorIcons.Regular.UsersThree, text = "Akun baru yang belum ada bisa dibuat otomatis atau dihubungkan ke akun yang ada")
+
+            // Disclaimer
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFFEF3C7))
+                    .padding(12.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(PhosphorIcons.Regular.Warning, null,
+                        tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
+                    Text(
+                        "Pembacaan data otomatis — penempatan kategori dan jenis transaksi " +
+                        "mungkin tidak 100% akurat. Selalu cek hasilnya di layar konfirmasi " +
+                        "sebelum menekan Gabungkan atau Ganti Semua Data.",
+                        fontSize = 12.sp, color = Color(0xFF92400E), lineHeight = 18.sp,
+                    )
+                }
+            }
+
+            // Buttons
+            Button(
+                onClick  = onPickFile,
+                modifier = Modifier.fillMaxWidth(),
+                shape    = RoundedCornerShape(14.dp),
+                colors   = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+            ) {
+                Icon(PhosphorIcons.Regular.FolderOpen, null,
+                    modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Pilih File XLSX", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Batal", color = TextMedium)
+            }
+        }
+    }
+}
+
+// ── Info row helper ────────────────────────────────────────────────────────────────
+@Composable
+private fun InfoRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFF1F5F9)),
+        ) {
+            Icon(icon, null, tint = TextMedium, modifier = Modifier.size(14.dp))
+        }
+        Text(text, fontSize = 12.sp, color = TextDark, lineHeight = 18.sp, modifier = Modifier.weight(1f))
     }
 }

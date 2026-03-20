@@ -434,6 +434,8 @@ internal object SmartImportEngine {
         "recurring", "repeat", "attachment", "image", "photo",
         "exchange rate", "kurs", "foreign amount", "converted amount",
         "status", "cleared", "reconciled",
+        // Money Manager: kolom Amount = duplikat IDR, Description = selalu kosong
+        "amount", "description", "idr", "usd", "sgd", "myr",
     )
 
     // Kategori yang selalu income
@@ -471,7 +473,8 @@ internal object SmartImportEngine {
         Role.ACCOUNT  to setOf("account","akun","wallet","dompet","source","from","sumber","rekening","account_name"),
         Role.TYPE     to setOf("type","tipe","direction","flow","in_out","income_expense",
                               "jenis_transaksi","income/expense","expense/income","transaction type",
-                              "jenis transaksi","jenis","kind","inout","in/out"),
+                              "jenis transaksi","jenis","kind","inout","in/out",
+                              ),  // "income/expense" sudah ada di atas
     )
 
     fun detectColumns(headerRow: Row): ColumnMap {
@@ -495,9 +498,11 @@ internal object SmartImportEngine {
 
         val assigned = mutableMapOf<Role, Int>()
         val claimed  = mutableSetOf<Int>()
+        // TYPE sebelum AMOUNT agar "Income/Expense" tidak salah diklaim sebagai AMOUNT
         // TXNNAME sebelum NOTE agar "Nama Transaksi" tidak salah diklaim sebagai catatan
-        val priority = listOf(Role.DATE, Role.TXNNAME, Role.DEBIT, Role.CREDIT, Role.AMOUNT,
-                              Role.CATEGORY, Role.NOTE, Role.ACCOUNT, Role.TYPE, Role.TIME)
+        val priority = listOf(Role.DATE, Role.TYPE, Role.ACCOUNT, Role.TXNNAME,
+                              Role.DEBIT, Role.CREDIT, Role.AMOUNT,
+                              Role.CATEGORY, Role.NOTE, Role.TIME)
         for (role in priority) {
             val best = (0 until n).filter { it !in claimed }
                 .maxByOrNull { scoreFor(headers[it], role) }
@@ -711,12 +716,13 @@ internal object SmartImportEngine {
 
     /**
      * Try to extract a time component from a combined datetime string like
-     * "06 Mar 2026 21:25" or "2026-03-06T21:25:00".
+     * "06 Mar 2026 21:25", "2026-03-06T21:25:00", or "03/20/2026 23:37:56".
      * Returns null if no time is found.
      */
     private fun extractTimeFromDateStr(raw: String): String? {
-        // Match HH:mm anywhere in the string (but not a year like 2026)
-        val match = Regex("(?<!\\d)(\\d{1,2}):(\\d{2})(?!:\\d{2}|\\d)").find(raw) ?: return null
+        // Match HH:mm(:ss optional) — negative lookbehind avoids matching year digits
+        // Pattern: 1-2 digits, colon, 2 digits, optionally followed by :2 digits (seconds)
+        val match = Regex("(?<![0-9])(\\d{1,2}):(\\d{2})(?::\\d{2})?").find(raw) ?: return null
         val h = match.groupValues[1].toIntOrNull() ?: return null
         val m = match.groupValues[2].toIntOrNull() ?: return null
         if (h > 23 || m > 59) return null

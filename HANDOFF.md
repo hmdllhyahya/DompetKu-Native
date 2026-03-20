@@ -257,6 +257,14 @@ notifEnabled, userProfile: UserProfile
 
 ## LOG PERUBAHAN
 
+### 2026-03-21 — Smart Import Fix Round 2 + Dialog Info Ekspor/Impor
+- **Bug 1 — `[Amount: xxx]` di semua nama transaksi:** Kolom `Amount` (index 8) Money Manager = duplikat IDR, kolom `Description` selalu kosong. Keduanya ditambahkan ke `IGNORED_HEADERS` sehingga tidak masuk `extras` dan tidak mencemari nama transaksi.
+- **Bug 2 — Waktu selalu `00:00`:** Regex `extractTimeFromDateStr` reject `23:37:56` karena diikuti `:56`. Fix: ubah pattern ke `(?<![0-9])(\d{1,2}):(\d{2})(?::\d{2})?` yang accept detik opsional.
+- **Bug 3 — Transfer-Out tidak terdeteksi:** `Role.TYPE` dipindahkan ke posisi pertama dalam `priority` detection loop agar `Income/Expense` kolom diklaim sebelum AMOUNT. Juga tambah `"income\/expense"` ke ROLE_KEYWORDS TYPE.
+- **Dialog Ekspor:** BottomSheet baru muncul sebelum ekspor dijalankan. Menampilkan jumlah transaksi & akun, isi 2 sheet, cara berbagi, disclaimer format.
+- **Dialog Impor:** BottomSheet baru muncul sebelum file picker dibuka. Menampilkan format yang didukung (Money Manager), kolom yang dikenali, cara kerja transfer, disclaimer akurasi.
+- Subtitle "Impor Data" diupdate jadi "Muat dari Money Manager XLSX" agar lebih jelas.
+
 ### 2026-03-21 — Smart Import: Money Manager Compatibility
 - **Bug 1 — Date parsing MM/DD/YYYY**: `03/20/2026` diparsing jadi `2026-20-03` (invalid). Fix: cek `b > 12` sebelum `c > 1900` sehingga MM/DD/YYYY ter-detect dengan benar.
 - **Bug 2 — Duplicate "Account" column**: Money Manager export punya dua kolom bernama "Account" (index 1 = nama akun, index 10 = angka amount). Yang kedua masuk ke `extras` dan polusi note dengan `[Account: 43500.0]`. Fix: `detectColumns` skip kolom yang header-nya sudah dipakai role lain.
