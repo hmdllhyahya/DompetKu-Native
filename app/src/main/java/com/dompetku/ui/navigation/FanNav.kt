@@ -19,6 +19,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,8 +28,10 @@ import androidx.compose.ui.zIndex
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.ui.components.DompetKuLogo
 import com.dompetku.ui.theme.*
+import com.dompetku.util.HapticHelper
 import kotlinx.coroutines.launch
 
 // ── Fan item spec ─────────────────────────────────────────────────────────────
@@ -65,6 +69,7 @@ fun FanNav(
 ) {
     var open by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     // ── Pulse: use Animatable so we can STOP it when fan opens ───────────────
     // When open → instantly set to 0, stop looping
@@ -179,7 +184,7 @@ fun FanNav(
                 verticalAlignment     = Alignment.CenterVertically,
             ) {
                 NavTabButton(
-                    label   = "Beranda",
+                    label   = stringResource(R.string.nav_home),
                     icon    = { tint -> Icon(PhosphorIcons.Regular.House, null, tint = tint, modifier = Modifier.size(24.dp)) },
                     active  = currentTab == NavTab.Home,
                     onClick = { onTabChange(NavTab.Home); open = false },
@@ -187,7 +192,7 @@ fun FanNav(
                 )
                 Spacer(modifier = Modifier.width(80.dp))
                 NavTabButton(
-                    label   = "Profil",
+                    label   = stringResource(R.string.nav_profile),
                     icon    = { tint -> Icon(PhosphorIcons.Regular.UserCircle, null, tint = tint, modifier = Modifier.size(24.dp)) },
                     active  = currentTab == NavTab.Profile,
                     onClick = { onTabChange(NavTab.Profile); open = false },
@@ -229,7 +234,10 @@ fun FanNav(
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication        = null,
-                    ) { open = !open },
+                    ) {
+                        HapticHelper.tapMedium(context)
+                        open = !open
+                    },
             ) {
                 // Logo icon (closed state)
                 DompetKuLogo(

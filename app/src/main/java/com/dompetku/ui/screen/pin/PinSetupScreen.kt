@@ -7,42 +7,48 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dompetku.util.HapticHelper
 
-enum class PinMode { UNLOCK, SET }
+private enum class PinSetupStage { VERIFY_OLD, ENTER_NEW, CONFIRM_NEW }
 
 @Composable
-fun PinLockScreen(
-    mode: PinMode = PinMode.UNLOCK,
-    bioEnabled: Boolean = false,
+fun PinSetupScreen(
+    isChangePin: Boolean,
     onSuccess: () -> Unit,
-    onCancel: (() -> Unit)? = null,
+    onCancel: () -> Unit,
     viewModel: PinViewModel = hiltViewModel(),
 ) {
     val result by viewModel.result.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val activity = context as? FragmentActivity
 
-    var pinStep by remember { mutableStateOf(PinStep.ENTER) }
-    var entered by remember { mutableStateOf("") }
+    var stage by remember(isChangePin) {
+        mutableStateOf(if (isChangePin) PinSetupStage.VERIFY_OLD else PinSetupStage.ENTER_NEW)
+    }
     var current by remember { mutableStateOf("") }
+    var firstEntry by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf("") }
 
     LaunchedEffect(result) {
         when (result) {
             is PinResult.Success -> {
+                if (stage == PinSetupStage.VERIFY_OLD) {
+                    stage = PinSetupStage.ENTER_NEW
+                    current = ""
+                    errorMsg = ""
+                } else if (stage == PinSetupStage.CONFIRM_NEW) {
+                    viewModel.setPinEnabled(true)
+                    onSuccess()
+                }
                 viewModel.resetResult()
-                onSuccess()
             }
             is PinResult.Error -> {
                 errorMsg = (result as PinResult.Error).message
                 current = ""
-                if (mode == PinMode.SET) {
-                    pinStep = PinStep.ENTER
-                    entered = ""
+                if (stage != PinSetupStage.VERIFY_OLD) {
+                    stage = PinSetupStage.ENTER_NEW
+                    firstEntry = ""
                 }
                 viewModel.resetResult()
             }
@@ -50,10 +56,10 @@ fun PinLockScreen(
         }
     }
 
-    val subtitle = when {
-        mode == PinMode.SET && pinStep == PinStep.CONFIRM -> "Konfirmasi PIN"
-        mode == PinMode.SET -> "Buat PIN 6 Digit"
-        else -> "Masukkan PIN"
+    val subtitle = when (stage) {
+        PinSetupStage.VERIFY_OLD -> "Masukkan PIN Lama"
+        PinSetupStage.ENTER_NEW -> if (isChangePin) "Masukkan PIN Baru" else "Buat PIN 6 Digit"
+        PinSetupStage.CONFIRM_NEW -> "Konfirmasi PIN Baru"
     }
 
     fun handleKey(key: String) {
@@ -61,31 +67,27 @@ fun PinLockScreen(
         errorMsg = ""
         when (key) {
             "⌫" -> if (current.isNotEmpty()) current = current.dropLast(1)
-            "BIO" -> activity?.let { act ->
-                viewModel.authenticateBiometric(activity = act, onSuccess = onSuccess)
-            }
             else -> {
                 if (current.length >= 6) return
                 val next = current + key
                 current = next
                 if (next.length < 6) return
 
-                when (mode) {
-                    PinMode.UNLOCK -> viewModel.verifyPin(next)
-                    PinMode.SET -> {
-                        if (pinStep == PinStep.ENTER) {
-                            entered = next
-                            current = ""
-                            pinStep = PinStep.CONFIRM
+                when (stage) {
+                    PinSetupStage.VERIFY_OLD -> viewModel.verifyPin(next)
+                    PinSetupStage.ENTER_NEW -> {
+                        firstEntry = next
+                        current = ""
+                        stage = PinSetupStage.CONFIRM_NEW
+                    }
+                    PinSetupStage.CONFIRM_NEW -> {
+                        if (next == firstEntry) {
+                            viewModel.savePin(next)
                         } else {
-                            if (next == entered) {
-                                viewModel.savePin(next)
-                            } else {
-                                errorMsg = "PIN tidak cocok"
-                                current = ""
-                                entered = ""
-                                pinStep = PinStep.ENTER
-                            }
+                            errorMsg = "PIN tidak cocok"
+                            current = ""
+                            firstEntry = ""
+                            stage = PinSetupStage.ENTER_NEW
                         }
                     }
                 }
@@ -97,10 +99,8 @@ fun PinLockScreen(
         subtitle = subtitle,
         filledCount = current.length,
         errorMsg = errorMsg,
-        keys = if (mode == PinMode.UNLOCK && bioEnabled) PinUnlockKeys else PinSetupKeys,
+        keys = PinSetupKeys,
         onKeyPress = ::handleKey,
         onCancel = onCancel,
     )
 }
-
-private enum class PinStep { ENTER, CONFIRM }

@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.launch
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.domain.model.Account
 import com.dompetku.domain.model.AccountType
 import com.dompetku.domain.model.Transaction
@@ -122,7 +124,7 @@ fun HomeScreen(
                 Box(modifier = Modifier.size(140.dp).offset(40.dp, (-40).dp).clip(CircleShape).background(Color.White.copy(alpha = 0.07f)).align(Alignment.TopEnd))
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Total Saldo", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+                        Text(stringResource(R.string.total_balance), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.2f)).clickable { viewModel.toggleHideBalance() },
@@ -135,8 +137,8 @@ fun HomeScreen(
                     Spacer(Modifier.height(18.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         listOf(
-                            Triple("Income",  state.monthIncome,  PhosphorIcons.Regular.ArrowDownLeft),
-                            Triple("Expense", state.monthExpense, PhosphorIcons.Regular.ArrowUpRight),
+                            Triple(stringResource(R.string.income_label),  state.monthIncome,  PhosphorIcons.Regular.ArrowDownLeft),
+                            Triple(stringResource(R.string.expense_label), state.monthExpense, PhosphorIcons.Regular.ArrowUpRight),
                         ).forEach { (label, value, icon) ->
                             Box(
                                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.15f)).clickable { onTabChange(NavTab.Transactions) }.padding(horizontal = 13.dp, vertical = 11.dp),

@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.domain.model.Transaction
 import com.dompetku.domain.model.TransactionType
 import com.dompetku.ui.components.*
@@ -96,7 +98,7 @@ fun TransactionsScreen(
         // ── App header (BUG-06: hide button moved to summary card) ────────────
         item {
             AppHeader(
-                title         = "Transaksi",
+                title         = stringResource(R.string.transactions_title),
                 showSearch    = true,
                 showDate      = false,
                 onSearchClick = { showSearch = !showSearch },
@@ -124,7 +126,7 @@ fun TransactionsScreen(
                         OutlinedTextField(
                             value         = searchQuery,
                             onValueChange = viewModel::setSearch,
-                            placeholder   = { Text("Cari transaksi, kategori...", fontSize = 14.sp) },
+                            placeholder   = { Text(stringResource(R.string.search_transactions_placeholder), fontSize = 14.sp) },
                             singleLine    = true,
                             colors        = OutlinedTextFieldDefaults.colors(
                                 unfocusedBorderColor    = Color.Transparent,
@@ -153,9 +155,9 @@ fun TransactionsScreen(
                         .padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FilterChip("Semua",       state.filters.type == TypeFilter.ALL,      { viewModel.setTypeFilter(TypeFilter.ALL) })
-                    FilterChip("Pengeluaran", state.filters.type == TypeFilter.EXPENSE,  { viewModel.setTypeFilter(TypeFilter.EXPENSE) }, activeColor = RedExpense)
-                    FilterChip("Pemasukan",   state.filters.type == TypeFilter.INCOME,   { viewModel.setTypeFilter(TypeFilter.INCOME) })
+                    FilterChip(stringResource(R.string.filter_all), state.filters.type == TypeFilter.ALL, { viewModel.setTypeFilter(TypeFilter.ALL) })
+                    FilterChip(stringResource(R.string.expense_label), state.filters.type == TypeFilter.EXPENSE, { viewModel.setTypeFilter(TypeFilter.EXPENSE) }, activeColor = RedExpense)
+                    FilterChip(stringResource(R.string.income_label), state.filters.type == TypeFilter.INCOME, { viewModel.setTypeFilter(TypeFilter.INCOME) })
                     FilterChip("Transfer",    state.filters.type == TypeFilter.TRANSFER, { viewModel.setTypeFilter(TypeFilter.TRANSFER) }, activeColor = Color(0xFF6366F1))
                 }
 
@@ -167,11 +169,11 @@ fun TransactionsScreen(
                         .padding(bottom = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FilterChip("Semua",      state.filters.date == DateFilter.ALL,    { viewModel.setDateFilter(DateFilter.ALL) },    activeColor = BlueAccent)
-                    FilterChip("Bulan Ini",  state.filters.date == DateFilter.MONTH,  { viewModel.setDateFilter(DateFilter.MONTH) },  activeColor = BlueAccent)
-                    FilterChip("Hari Ini",   state.filters.date == DateFilter.TODAY,  { viewModel.setDateFilter(DateFilter.TODAY) },  activeColor = BlueAccent)
-                    FilterChip("Minggu Ini", state.filters.date == DateFilter.WEEK,   { viewModel.setDateFilter(DateFilter.WEEK) },   activeColor = BlueAccent)
-                    FilterChip("Custom",     state.filters.date == DateFilter.CUSTOM, { viewModel.setDateFilter(DateFilter.CUSTOM) }, activeColor = BlueAccent)
+                    FilterChip(stringResource(R.string.filter_all), state.filters.date == DateFilter.ALL, { viewModel.setDateFilter(DateFilter.ALL) }, activeColor = BlueAccent)
+                    FilterChip(stringResource(R.string.filter_this_month), state.filters.date == DateFilter.MONTH, { viewModel.setDateFilter(DateFilter.MONTH) }, activeColor = BlueAccent)
+                    FilterChip(stringResource(R.string.filter_today), state.filters.date == DateFilter.TODAY, { viewModel.setDateFilter(DateFilter.TODAY) }, activeColor = BlueAccent)
+                    FilterChip(stringResource(R.string.filter_this_week), state.filters.date == DateFilter.WEEK, { viewModel.setDateFilter(DateFilter.WEEK) }, activeColor = BlueAccent)
+                    FilterChip(stringResource(R.string.filter_custom), state.filters.date == DateFilter.CUSTOM, { viewModel.setDateFilter(DateFilter.CUSTOM) }, activeColor = BlueAccent)
                 }
 
                 // BUG-05: Custom date pickers — DatePickerDialog, bukan keyboard
@@ -189,7 +191,7 @@ fun TransactionsScreen(
                                         .padding(horizontal = 12.dp, vertical = 12.dp),
                                 ) {
                                     Text(
-                                        text      = state.filters.customFrom.ifEmpty { "Pilih tanggal" },
+                                        text      = state.filters.customFrom.ifEmpty { stringResource(R.string.pick_date) },
                                         fontSize  = 13.sp,
                                         color     = if (state.filters.customFrom.isEmpty()) TextLight else TextDark,
                                         fontWeight = FontWeight.SemiBold,
@@ -207,7 +209,7 @@ fun TransactionsScreen(
                                         .padding(horizontal = 12.dp, vertical = 12.dp),
                                 ) {
                                     Text(
-                                        text      = state.filters.customTo.ifEmpty { "Pilih tanggal" },
+                                        text      = state.filters.customTo.ifEmpty { stringResource(R.string.pick_date) },
                                         fontSize  = 13.sp,
                                         color     = if (state.filters.customTo.isEmpty()) TextLight else TextDark,
                                         fontWeight = FontWeight.SemiBold,

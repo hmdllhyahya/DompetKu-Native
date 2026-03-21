@@ -20,6 +20,7 @@ opencsv                 = "5.9"
 sods                    = "1.6.7"
 gson                    = "2.10.1"
 material 		        = "1.13.0"
+appcompat               = "1.7.0"
 ksp                     = "2.0.21-1.0.28"
 security-crypto         = "1.1.0-alpha06"
 
@@ -34,6 +35,7 @@ compose-animation       = { group = "androidx.compose.animation",name = "animati
 activity-compose        = { group = "androidx.activity",         name = "activity-compose",         version.ref = "activityCompose" }
 navigation-compose      = { group = "androidx.navigation",       name = "navigation-compose",       version.ref = "navigationCompose" }
 material 		        = { group = "com.google.android.material", name = "material",               version.ref = "material" }
+appcompat               = { group = "androidx.appcompat",       name = "appcompat",              version.ref = "appcompat" }
 
 room-runtime            = { group = "androidx.room",             name = "room-runtime",             version.ref = "room" }
 room-ktx                = { group = "androidx.room",             name = "room-ktx",                 version.ref = "room" }

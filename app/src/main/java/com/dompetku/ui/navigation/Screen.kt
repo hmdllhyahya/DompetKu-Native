@@ -9,6 +9,10 @@ sealed class Screen(val route: String) {
     // ── Pre-auth ──────────────────────────────────────────────────────────────
     object Onboarding    : Screen("onboarding")
     object PinLock       : Screen("pin_lock")
+    object PinSetup      : Screen("pin_setup?change={change}") {
+        const val ARG_CHANGE = "change"
+        fun createRoute(change: Boolean) = "pin_setup?change=$change"
+    }
 
     // ── Main shell (hosts FanNav + all tab content) ───────────────────────────
     object Main          : Screen("main")

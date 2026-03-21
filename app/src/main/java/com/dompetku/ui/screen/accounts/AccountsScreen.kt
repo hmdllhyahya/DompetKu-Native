@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.InfiniteRepeatableSpec
 import androidx.compose.animation.core.RepeatMode
@@ -34,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.domain.model.Account
 import com.dompetku.domain.model.AccountType
 import com.dompetku.ui.components.*
@@ -64,7 +66,7 @@ fun AccountsScreen(
             .padding(bottom = 100.dp),
     ) {
         AppHeader(
-            title    = "Akun",
+            title    = stringResource(R.string.accounts_title),
             showDate = false,
             trailingContent = {
                 Box(
@@ -102,7 +104,7 @@ fun AccountsScreen(
                     modifier              = Modifier.fillMaxWidth(),
                 ) {
                     Column {
-                        Text("Total Semua Akun", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+                        Text(stringResource(R.string.accounts_total_title), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                         Spacer(Modifier.height(4.dp))
                         Text(if (hidden) "Rp ••••••" else CurrencyFormatter.format(totalBalance), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
                     }
@@ -116,7 +118,7 @@ fun AccountsScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Icon(PhosphorIcons.Regular.CurrencyCircleDollar, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Text("Kurs", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.exchange_rate), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -130,17 +132,17 @@ fun AccountsScreen(
                 verticalAlignment     = Alignment.CenterVertically,
                 modifier              = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             ) {
-                Text("Daftar Akun", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                Text(stringResource(R.string.account_list_title), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SmallChipButton(if (editMode) "Selesai" else "Edit", PhosphorIcons.Regular.PencilSimple, onClick = { editMode = !editMode })
-                    SmallChipButton("Transfer", PhosphorIcons.Regular.ArrowsLeftRight, onClick = onOpenTransfer, enabled = accounts.size >= 2, color = GreenPrimary)
-                    SmallChipButton("Tambah", PhosphorIcons.Regular.Plus, onClick = { showAddSheet = true }, color = GreenPrimary)
+                    SmallChipButton(if (editMode) stringResource(R.string.done_label) else stringResource(R.string.edit_label), PhosphorIcons.Regular.PencilSimple, onClick = { editMode = !editMode })
+                    SmallChipButton(stringResource(R.string.transfer_label), PhosphorIcons.Regular.ArrowsLeftRight, onClick = onOpenTransfer, enabled = accounts.size >= 2, color = GreenPrimary)
+                    SmallChipButton(stringResource(R.string.add_label), PhosphorIcons.Regular.Plus, onClick = { showAddSheet = true }, color = GreenPrimary)
                 }
             }
 
             if (accounts.isEmpty()) {
                 WhiteCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("Belum ada akun. Tambah sekarang!", fontSize = 13.sp, color = TextLight,
+                    Text(stringResource(R.string.no_accounts_message), fontSize = 13.sp, color = TextLight,
                         modifier = Modifier.align(Alignment.CenterHorizontally).padding(8.dp))
                 }
             }

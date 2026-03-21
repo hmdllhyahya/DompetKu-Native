@@ -6,8 +6,10 @@ import androidx.compose.runtime.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import androidx.navigation.compose.rememberNavController
 import com.dompetku.ui.MainScaffold
 import com.dompetku.ui.RootViewModel
@@ -21,6 +23,7 @@ import com.dompetku.ui.screen.home.HomeScreen
 import com.dompetku.ui.screen.onboarding.OnboardingScreen
 import com.dompetku.ui.screen.pin.PinLockScreen
 import com.dompetku.ui.screen.pin.PinMode
+import com.dompetku.ui.screen.pin.PinSetupScreen
 import com.dompetku.ui.screen.profile.ProfileScreen
 import com.dompetku.ui.screen.transactions.TransactionsScreen
 import com.dompetku.ui.screen.transactions.TransactionsViewModel
@@ -68,6 +71,29 @@ fun DompetKuNavHost(
                         popUpTo(Screen.PinLock.route) { inclusive = true }
                     }
                 },
+            )
+        }
+
+        composable(
+            route = Screen.PinSetup.route,
+            arguments = listOf(
+                navArgument(Screen.PinSetup.ARG_CHANGE) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            ),
+        ) { backStack ->
+            val isChangePin = backStack.arguments?.getBoolean(Screen.PinSetup.ARG_CHANGE) ?: false
+            PinSetupScreen(
+                isChangePin = isChangePin,
+                onSuccess = {
+                    if (isChangePin) {
+                        navController.popBackStack()
+                    } else {
+                        navController.popBackStack()
+                    }
+                },
+                onCancel = { navController.popBackStack() },
             )
         }
 
@@ -128,6 +154,9 @@ fun DompetKuNavHost(
                         NavTab.Profile -> ProfileScreen(
                             onNavigateToMiniGame = {
                                 navController.navigate(Screen.MiniGame.route)
+                            },
+                            onNavigateToPinSetup = { isChangePin ->
+                                navController.navigate(Screen.PinSetup.createRoute(isChangePin))
                             },
                         )
                     }

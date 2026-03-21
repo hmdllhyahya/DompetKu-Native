@@ -2,8 +2,12 @@ package com.dompetku
 
 import android.os.Bundle
 import android.view.WindowManager
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.os.LocaleListCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
 import com.dompetku.ui.RootViewModel
@@ -30,6 +34,13 @@ class MainActivity : FragmentActivity() {
         // Prevent screenshots and app-switcher previews from exposing financial data
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContent {
+            val prefs = rootViewModel.prefs.collectAsStateWithLifecycle().value
+            LaunchedEffect(prefs?.lang) {
+                val lang = prefs?.lang ?: "id"
+                AppCompatDelegate.setApplicationLocales(
+                    LocaleListCompat.forLanguageTags(lang)
+                )
+            }
             DompetKuTheme {
                 DompetKuNavHost(rootViewModel = rootViewModel)
             }

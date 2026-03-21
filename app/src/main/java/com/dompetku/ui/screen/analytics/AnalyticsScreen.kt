@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.ui.components.*
 import com.dompetku.ui.theme.*
 import com.dompetku.util.CurrencyFormatter
@@ -49,7 +51,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
             .verticalScroll(rememberScrollState())
             .padding(bottom = 100.dp),
     ) {
-        AppHeader(title = "Analisis", showDate = false)
+        AppHeader(title = stringResource(R.string.analytics_title), showDate = false)
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Spacer(Modifier.height(8.dp))
@@ -59,7 +61,12 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                listOf("all" to "Semua", "expense" to "Pengeluaran", "income" to "Pemasukan", "transfer" to "Transfer")
+                listOf(
+                    "all" to stringResource(R.string.filter_all),
+                    "expense" to stringResource(R.string.expense_label),
+                    "income" to stringResource(R.string.income_label),
+                    "transfer" to stringResource(R.string.transfer_label)
+                )
                     .forEach { (id, label) ->
                         FilterChip(label, state.typeFilter == id, { viewModel.setTypeFilter(id) })
                     }
@@ -70,8 +77,14 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                listOf("all" to "Semua", "today" to "Hari Ini", "week" to "Minggu Ini",
-                       "month" to "Bulan Ini", "year" to "Tahun Ini", "custom" to "Custom")
+                listOf(
+                    "all" to stringResource(R.string.filter_all),
+                    "today" to stringResource(R.string.filter_today),
+                    "week" to stringResource(R.string.filter_this_week),
+                    "month" to stringResource(R.string.filter_this_month),
+                    "year" to "Tahun Ini",
+                    "custom" to stringResource(R.string.filter_custom)
+                )
                     .forEach { (id, label) ->
                         FilterChip(label, state.dateFilter == id, { viewModel.setDateFilter(id) }, activeColor = BlueAccent)
                     }
@@ -79,16 +92,16 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
 
             // ── Income / Expense summary cards ────────────────────────────────
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 12.dp)) {
-                SummaryCard("Pemasukan",   state.totalIncome,  GreenPrimary, Color(0xFFE8FAF0), Modifier.weight(1f))
-                SummaryCard("Pengeluaran", state.totalExpense, RedExpense,   RedLight,           Modifier.weight(1f))
+                SummaryCard(stringResource(R.string.income_label), state.totalIncome, GreenPrimary, Color(0xFFE8FAF0), Modifier.weight(1f))
+                SummaryCard(stringResource(R.string.expense_label), state.totalExpense, RedExpense, RedLight, Modifier.weight(1f))
             }
 
             // ── Pie chart card ────────────────────────────────────────────────
             WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                Text("Pengeluaran per Kategori", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
+                Text(stringResource(R.string.analytics_expense_by_category), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
                     color = TextDark, modifier = Modifier.padding(bottom = 10.dp))
                 if (state.pieData.isEmpty()) {
-                    Text("Tidak ada data", color = TextLight, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+                    Text(stringResource(R.string.analytics_no_data), color = TextLight, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
                 } else {
                     var activeIdx by remember { mutableIntStateOf(-1) }
                     PieDonut(pieData = state.pieData, activeIdx = activeIdx, onActiveChange = { activeIdx = it })
@@ -123,7 +136,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
 
             // ── Weekly bar chart ──────────────────────────────────────────────
             WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                Text("Ringkasan Mingguan", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
+                Text(stringResource(R.string.analytics_weekly_summary), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
                     color = TextDark, modifier = Modifier.padding(bottom = 12.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

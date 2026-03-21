@@ -75,6 +75,7 @@ dependencies {
     // Activity + Navigation
     implementation(libs.activity.compose)
     implementation(libs.navigation.compose)
+    implementation(libs.appcompat)
 
     // Room
     implementation(libs.room.runtime)

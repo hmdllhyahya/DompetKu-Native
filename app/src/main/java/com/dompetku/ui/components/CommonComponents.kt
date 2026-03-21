@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.domain.model.TransactionType
 import com.dompetku.ui.theme.*
 import com.dompetku.util.CurrencyFormatter
@@ -135,7 +137,7 @@ fun AppHeader(
     trailingContent: @Composable (() -> Unit)? = null,
 ) {
     val today = remember {
-        LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale("id", "ID")))
+        LocalDate.now().format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault()))
     }
     Surface(
         tonalElevation = 0.dp,
@@ -178,7 +180,12 @@ fun AppHeader(
                             .size(32.dp)
                             .background(Color(0xFFF1F5F9), RoundedCornerShape(9.dp)),
                     ) {
-                        Icon(PhosphorIcons.Regular.MagnifyingGlass, null, tint = TextDark, modifier = Modifier.size(15.dp))
+                        Icon(
+                            PhosphorIcons.Regular.MagnifyingGlass,
+                            stringResource(R.string.search_content_description),
+                            tint = TextDark,
+                            modifier = Modifier.size(15.dp),
+                        )
                     }
                 }
                 if (showLock) {

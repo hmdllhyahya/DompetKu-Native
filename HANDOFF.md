@@ -442,3 +442,10 @@ Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN d
 - **FLAG_SECURE:** `window.addFlags(FLAG_SECURE)` di `MainActivity.onCreate` — cegah screenshot & app-switcher preview data keuangan
 - **INTERNET permission:** sempat dihapus, lalu dikembalikan — dibutuhkan `CurrencySheet` untuk fetch kurs realtime ke `exchangerate-api.com`. Komentar justifikasi ditambah di Manifest agar jelas.
 - **BuildConfig.DEBUG:** tombol [DEBUG] Test Notifikasi di ProfileScreen sekarang pakai `BuildConfig.DEBUG` yang proper (bukan `if (true)`) + import `com.dompetku.BuildConfig` ditambahkan
+### 2026-03-21 â€” PIN Setup Screen + Haptics + Biometric Confirm + Language Switch
+- **PIN setup full screen:** tambah `PinSetupScreen.kt` dengan keypad custom DompetKu, flow setup 2 langkah, plus mode ganti PIN yang verifikasi PIN lama dulu sebelum set PIN baru. `PinLockScreen.kt` juga di-refactor agar berbagi layout keypad yang sama via `PinScreenComponents.kt`.
+- **Navigasi PIN baru:** tambah route `Screen.PinSetup` di `Screen.kt` dan composable baru di `NavGraph.kt`. `ProfileScreen.kt` sekarang membuka full-screen PIN setup saat toggle PIN ON dan saat user pilih "Ganti PIN".
+- **Haptic feedback:** helper baru `util/HapticHelper.kt` ditambahkan. Dipakai untuk keypad PIN, toggle PIN/biometrik di `ProfileScreen.kt`, dan FAB utama di `ui/navigation/FanNav.kt`.
+- **Biometric confirmation:** toggle biometrik di `ProfileScreen.kt` sekarang menampilkan `BiometricPrompt` dulu saat enable. Hanya `onAuthenticationSucceeded` yang mengaktifkan `bioEnabled`.
+- **Language switch aktif:** tambah `values/strings.xml` + `values-en/strings.xml`, dependency `androidx.appcompat:appcompat`, dan locale apply via `AppCompatDelegate.setApplicationLocales()` di `MainActivity.kt`. Label inti di Home/Transactions/Accounts/Analytics/Profile serta komponen shared utama mulai dipindahkan ke resources.
+- **Build verification:** `assembleDebug` berhasil setelah clean generated KSP cache lokal.

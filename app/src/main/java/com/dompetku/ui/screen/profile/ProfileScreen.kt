@@ -3,6 +3,9 @@ package com.dompetku.ui.screen.profile
 import android.Manifest
 import android.content.Intent
 import android.os.Build
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
@@ -35,6 +38,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +55,7 @@ import kotlinx.coroutines.flow.collectLatest
 import com.adamglin.PhosphorIcons
 import com.adamglin.phosphoricons.Regular
 import com.adamglin.phosphoricons.regular.*
+import com.dompetku.R
 import com.dompetku.domain.model.UserProfile
 import com.dompetku.ui.components.AppHeader
 import com.dompetku.ui.components.GreenButton
@@ -58,6 +63,7 @@ import com.dompetku.ui.components.SectionLabel
 import com.dompetku.ui.components.SectionRow
 import com.dompetku.ui.components.Toggle
 import com.dompetku.ui.theme.*
+import com.dompetku.util.HapticHelper
 import com.dompetku.util.PinHasher
 
 private val JOBS = listOf(
@@ -75,6 +81,7 @@ private val EDUS = listOf(
 @Composable
 fun ProfileScreen(
     onNavigateToMiniGame: () -> Unit,
+    onNavigateToPinSetup: (Boolean) -> Unit,
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -82,6 +89,7 @@ fun ProfileScreen(
     val profile = prefs.userProfile
 
     val context = LocalContext.current
+    val activity = context as? FragmentActivity
     var showPinSheet       by remember { mutableStateOf(false) }
     var showSetPinSheet    by remember { mutableStateOf(false) }
     var showEditSheet      by remember { mutableStateOf(false) }
@@ -156,6 +164,25 @@ fun ProfileScreen(
         }
     }
 
+    fun promptBiometricEnable() {
+        val act = activity ?: return
+        val executor = ContextCompat.getMainExecutor(act)
+        val callback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                viewModel.setBioEnabled(true)
+            }
+        }
+        val allowedAuth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(context.getString(R.string.pin_biometric_enable_title))
+            .setSubtitle(context.getString(R.string.pin_biometric_enable_subtitle))
+            .setNegativeButtonText(context.getString(R.string.cancel_label))
+            .setAllowedAuthenticators(allowedAuth)
+            .build()
+        BiometricPrompt(act, executor, callback).authenticate(promptInfo)
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
@@ -164,7 +191,7 @@ fun ProfileScreen(
             .verticalScroll(rememberScrollState())
             .padding(bottom = 100.dp),
     ) {
-        AppHeader(title = "Profil", showDate = false)
+        AppHeader(title = stringResource(R.string.profile_title), showDate = false)
 
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
 
@@ -205,7 +232,7 @@ fun ProfileScreen(
                 verticalAlignment     = Alignment.CenterVertically,
                 modifier              = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             ) {
-                Text("PROFIL SAYA", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 1.sp)
+                Text(stringResource(R.string.profile_my_profile), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 1.sp)
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -214,7 +241,7 @@ fun ProfileScreen(
                         .clickable { showEditSheet = true }
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                 ) {
-                    Text("Edit", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
+                    Text(stringResource(R.string.edit_label), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = GreenPrimary)
                 }
             }
             ProfileCard(innerPadding = true) {
@@ -235,18 +262,24 @@ fun ProfileScreen(
             Spacer(Modifier.height(12.dp))
 
             // ── Keamanan ───────────────────────────────────────────────────────
-            SectionLabel("KEAMANAN")
+            SectionLabel(stringResource(R.string.profile_security))
             ProfileCard {
                 SectionRow(
                     icon = PhosphorIcons.Regular.Lock, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
-                    title    = "Kunci PIN",
-                    subtitle = if (prefs.pinEnabled) "Aktif" else "Nonaktif",
+                    title    = stringResource(R.string.profile_pin_lock),
+                    subtitle = if (prefs.pinEnabled) stringResource(R.string.profile_enabled) else stringResource(R.string.profile_disabled),
                     rightContent = {
                         Toggle(
                             checked  = prefs.pinEnabled,
                             onToggle = {
-                                if (!prefs.pinEnabled) showSetPinSheet = true
-                                else { viewModel.setPinEnabled(false); viewModel.setBioEnabled(false) }
+                                if (!prefs.pinEnabled) {
+                                    HapticHelper.toggleOn(context)
+                                    onNavigateToPinSetup(false)
+                                } else {
+                                    HapticHelper.toggleOff(context)
+                                    viewModel.setPinEnabled(false)
+                                    viewModel.setBioEnabled(false)
+                                }
                             }
                         )
                     },
@@ -254,20 +287,29 @@ fun ProfileScreen(
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
                     icon = PhosphorIcons.Regular.Fingerprint, iconBg = Color(0xFFEDE9FE), iconTint = Color(0xFF8B5CF6),
-                    title    = "Biometrik",
-                    subtitle = if (!prefs.pinEnabled) "Aktifkan PIN dulu" else null,
+                    title    = stringResource(R.string.profile_biometric),
+                    subtitle = if (!prefs.pinEnabled) stringResource(R.string.profile_enable_pin_first) else null,
                     rightContent = {
                         Toggle(
                             checked  = prefs.bioEnabled && prefs.pinEnabled,
-                            onToggle = { if (prefs.pinEnabled) viewModel.setBioEnabled(!prefs.bioEnabled) }
+                            onToggle = {
+                                if (!prefs.pinEnabled) return@Toggle
+                                if (prefs.bioEnabled) {
+                                    HapticHelper.toggleOff(context)
+                                    viewModel.setBioEnabled(false)
+                                } else {
+                                    HapticHelper.toggleOn(context)
+                                    promptBiometricEnable()
+                                }
+                            }
                         )
                     },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
                     icon = PhosphorIcons.Regular.Key, iconBg = Color(0xFFDBEAFE), iconTint = Color(0xFF3B82F6),
-                    title   = "Ganti PIN",
-                    onClick = { if (prefs.pinEnabled) showPinSheet = true },
+                    title   = stringResource(R.string.profile_change_pin),
+                    onClick = { if (prefs.pinEnabled) onNavigateToPinSetup(true) },
                     isLast  = true,
                 )
             }
@@ -275,18 +317,18 @@ fun ProfileScreen(
             Spacer(Modifier.height(12.dp))
 
             // ── Preferensi ─────────────────────────────────────────────────────
-            SectionLabel("PREFERENSI")
+            SectionLabel(stringResource(R.string.profile_preferences))
             ProfileCard {
                 SectionRow(
                     icon = PhosphorIcons.Regular.SpeakerHigh, iconBg = Color(0xFFD1FAE5), iconTint = GreenPrimary,
-                    title = "Suara Transaksi",
+                    title = stringResource(R.string.profile_sound),
                     rightContent = { Toggle(checked = prefs.soundEnabled, onToggle = { viewModel.setSoundEnabled(!prefs.soundEnabled) }) },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
                     icon = PhosphorIcons.Regular.Bell, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
-                    title = "Pengingat Harian",
-                    subtitle = "Budget harian + ringkasan (5 notifikasi/hari)",
+                    title = stringResource(R.string.profile_daily_reminder),
+                    subtitle = stringResource(R.string.profile_daily_reminder_desc),
                     rightContent = {
                         Toggle(
                             checked  = prefs.notifEnabled,
@@ -308,7 +350,7 @@ fun ProfileScreen(
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
                     icon = PhosphorIcons.Regular.Translate, iconBg = Color(0xFFDBEAFE), iconTint = Color(0xFF3B82F6),
-                    title = "Bahasa",
+                    title = stringResource(R.string.profile_language),
                     rightContent = { LanguageToggle(lang = prefs.lang, onToggle = { viewModel.setLang(it) }) },
                     isLast = true,
                 )
@@ -317,13 +359,13 @@ fun ProfileScreen(
             Spacer(Modifier.height(12.dp))
 
             // ── Data ───────────────────────────────────────────────────────────
-            SectionLabel("DATA")
+            SectionLabel(stringResource(R.string.profile_data))
             ProfileCard {
                 SectionRow(
                     icon     = PhosphorIcons.Regular.ArrowSquareOut,
                     iconBg   = Color(0xFFDBEAFE),
                     iconTint = Color(0xFF3B82F6),
-                    title    = "Ekspor Data",
+                    title    = stringResource(R.string.profile_export),
                     subtitle = if (isExporting) "Sedang mengekspor..." else "Simpan ke XLSX",
                     onClick  = { if (!isExporting) showExportInfoDialog = true },
                 )
@@ -332,7 +374,7 @@ fun ProfileScreen(
                     icon     = PhosphorIcons.Regular.ArrowSquareIn,
                     iconBg   = Color(0xFFD1FAE5),
                     iconTint = GreenPrimary,
-                    title    = "Impor Data",
+                    title    = stringResource(R.string.profile_import),
                     subtitle = if (isImporting) "Membaca file..." else "Muat dari Money Manager XLSX",
                     onClick  = { if (!isImporting) showImportInfoDialog = true },
                 )
