@@ -137,7 +137,7 @@ fun ProfileScreen(
                         putExtra(Intent.EXTRA_STREAM, event.uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                    context.startActivity(Intent.createChooser(intent, "Bagikan file ekspor"))
+                    context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_export_file)))
                 }
                 is com.dompetku.ui.screen.profile.EiEvent.ImportPreviewReady -> {
                     importPreview = event.result
@@ -147,8 +147,17 @@ fun ProfileScreen(
                     smartImportPreview = event.result
                 }
                 is com.dompetku.ui.screen.profile.EiEvent.ImportCommitted -> {
-                    snackbarMessage = "Import selesai: ${event.txnCount} transaksi, ${event.accCount} akun" +
-                        if (event.errCount > 0) " (${event.errCount} baris dilewati)" else ""
+                    val skippedSuffix = if (event.errCount > 0) {
+                        context.getString(R.string.import_skipped_suffix, event.errCount)
+                    } else {
+                        ""
+                    }
+                    snackbarMessage = context.getString(
+                        R.string.import_success_summary,
+                        event.txnCount,
+                        event.accCount,
+                        skippedSuffix,
+                    )
                 }
                 is com.dompetku.ui.screen.profile.EiEvent.Failure -> {
                     snackbarMessage = event.message
@@ -211,7 +220,7 @@ fun ProfileScreen(
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    profile.name.ifEmpty { "Nama Pengguna" },
+                    profile.name.ifEmpty { stringResource(R.string.profile_user_placeholder) },
                     fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = TextDark,
                 )
                 Spacer(Modifier.height(4.dp))
@@ -327,8 +336,8 @@ fun ProfileScreen(
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
                     icon = PhosphorIcons.Regular.DeviceMobile, iconBg = Color(0xFFEDE9FE), iconTint = Color(0xFF8B5CF6),
-                    title = "Getaran",
-                    subtitle = "Haptic feedback saat ketik & toggle",
+                    title = stringResource(R.string.profile_vibration),
+                    subtitle = stringResource(R.string.profile_vibration_desc),
                     rightContent = {
                         Toggle(
                             checked  = prefs.vibrationEnabled,
@@ -382,7 +391,7 @@ fun ProfileScreen(
                     iconBg   = Color(0xFFDBEAFE),
                     iconTint = Color(0xFF3B82F6),
                     title    = stringResource(R.string.profile_export),
-                    subtitle = if (isExporting) "Sedang mengekspor..." else "Simpan ke XLSX",
+                    subtitle = if (isExporting) stringResource(R.string.profile_export_loading) else stringResource(R.string.profile_export_idle),
                     onClick  = { if (!isExporting) showExportInfoDialog = true },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
@@ -391,14 +400,14 @@ fun ProfileScreen(
                     iconBg   = Color(0xFFD1FAE5),
                     iconTint = GreenPrimary,
                     title    = stringResource(R.string.profile_import),
-                    subtitle = if (isImporting) "Membaca file..." else "Muat dari Money Manager XLSX",
+                    subtitle = if (isImporting) stringResource(R.string.profile_import_loading) else stringResource(R.string.profile_import_idle),
                     onClick  = { if (!isImporting) showImportInfoDialog = true },
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
                     icon = PhosphorIcons.Regular.Trash, iconBg = RedLight, iconTint = RedExpense,
-                    title    = "Hapus Semua Data",
-                    subtitle = "Transaksi & akun akan dihapus permanen",
+                    title    = stringResource(R.string.profile_delete_all),
+                    subtitle = stringResource(R.string.profile_delete_all_desc),
                     isDanger = true,
                     onClick  = { showDeleteConfirm = true },
                     isLast   = true,
@@ -408,12 +417,12 @@ fun ProfileScreen(
             Spacer(Modifier.height(12.dp))
 
             // ── Tentang ────────────────────────────────────────────────────────
-            SectionLabel("TENTANG")
+            SectionLabel(stringResource(R.string.profile_about))
             ProfileCard {
                 SectionRow(
                     icon     = PhosphorIcons.Regular.Star, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
-                    title    = "DompetKu",
-                    subtitle = "Versi 0.0703.5G",
+                    title    = stringResource(R.string.app_name),
+                    subtitle = stringResource(R.string.profile_version, BuildConfig.VERSION_NAME),
                     isLast   = false,
                     onClick  = {
                         tapCount++
@@ -426,8 +435,8 @@ fun ProfileScreen(
                         icon     = PhosphorIcons.Regular.BellRinging,
                         iconBg   = Color(0xFFFEE2E2),
                         iconTint = Color(0xFFEF4444),
-                        title    = "[DEBUG] Test Notifikasi",
-                        subtitle = "Kirim semua 5 slot sekarang",
+                        title    = stringResource(R.string.profile_debug_notifications),
+                        subtitle = stringResource(R.string.profile_debug_notifications_desc),
                         isLast   = true,
                         onClick  = { viewModel.testNotifications() },
                     )
@@ -445,7 +454,7 @@ fun ProfileScreen(
     // ── Loading overlay (import / export sedang berjalan) ──────────────────
     if (isImporting || isExporting) {
         DompetKuLoadingOverlay(
-            message = if (isImporting) "Membaca data..." else "Mengekspor data..."
+            message = if (isImporting) stringResource(R.string.loading_reading_data) else stringResource(R.string.loading_exporting_data)
         )
     }
 
@@ -541,13 +550,13 @@ fun ProfileScreen(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title  = { Text("Hapus Semua Data?", fontWeight = FontWeight.ExtraBold) },
-            text   = { Text("Semua transaksi dan akun akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.") },
+            title  = { Text(stringResource(R.string.delete_all_data_title), fontWeight = FontWeight.ExtraBold) },
+            text   = { Text(stringResource(R.string.delete_all_data_message)) },
             confirmButton = {
                 Button(onClick = { viewModel.deleteAllData(); showDeleteConfirm = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = RedExpense)) { Text("Hapus Semua") }
+                    colors = ButtonDefaults.buttonColors(containerColor = RedExpense)) { Text(stringResource(R.string.delete_all_label)) }
             },
-            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Batal") } },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.cancel_label)) } },
         )
     }
 }
@@ -565,7 +574,7 @@ private fun ImportPreviewDialog(
         containerColor   = PageBg,
         shape            = RoundedCornerShape(24.dp),
         title = {
-            Text("Konfirmasi Import", fontWeight = FontWeight.ExtraBold, color = TextDark)
+            Text(stringResource(R.string.import_confirm_title), fontWeight = FontWeight.ExtraBold, color = TextDark)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -580,7 +589,7 @@ private fun ImportPreviewDialog(
                     ) {
                         Column {
                             Text("${preview.transactions.size}", fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color(0xFF3B82F6))
-                            Text("transaksi", fontSize = 11.sp, color = TextMedium)
+                            Text(stringResource(R.string.import_transactions_unit), fontSize = 11.sp, color = TextMedium)
                         }
                     }
                     Box(
@@ -592,7 +601,7 @@ private fun ImportPreviewDialog(
                     ) {
                         Column {
                             Text("${preview.accounts.size}", fontSize = 20.sp, fontWeight = FontWeight.Black, color = GreenPrimary)
-                            Text("akun", fontSize = 11.sp, color = TextMedium)
+                            Text(stringResource(R.string.import_accounts_unit), fontSize = 11.sp, color = TextMedium)
                         }
                     }
                 }
@@ -627,7 +636,7 @@ private fun ImportPreviewDialog(
                     shape    = RoundedCornerShape(12.dp),
                     colors   = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                 ) {
-                    Text("Gabungkan", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.import_merge_label), fontWeight = FontWeight.Bold)
                 }
                 OutlinedButton(
                     onClick  = onReplace,
@@ -636,7 +645,7 @@ private fun ImportPreviewDialog(
                     colors   = ButtonDefaults.outlinedButtonColors(contentColor = RedExpense),
                     border   = androidx.compose.foundation.BorderStroke(1.dp, RedExpense),
                 ) {
-                    Text("Ganti Semua Data", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.import_replace_all_label), fontWeight = FontWeight.Bold)
                 }
                 TextButton(
                     onClick  = onDismiss,
@@ -1409,7 +1418,7 @@ private fun DompetKuLoadingOverlay(message: String) {
                     color      = TextDark,
                 )
                 Text(
-                    text     = "Mohon tunggu sebentar",
+                    text     = stringResource(R.string.loading_please_wait),
                     fontSize = 12.sp,
                     color    = TextMedium,
                 )
@@ -1454,8 +1463,8 @@ private fun ExportInfoDialog(
                         tint = Color(0xFF3B82F6), modifier = Modifier.size(22.dp))
                 }
                 Column {
-                    Text("Ekspor Data", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
-                    Text("Format XLSX · 2 sheet", fontSize = 12.sp, color = TextMedium)
+                    Text(stringResource(R.string.export_info_title), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text(stringResource(R.string.export_info_subtitle), fontSize = 12.sp, color = TextMedium)
                 }
             }
 
@@ -1467,7 +1476,7 @@ private fun ExportInfoDialog(
                 ) {
                     Column {
                         Text("$txnCount", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Color(0xFF3B82F6))
-                        Text("transaksi", fontSize = 11.sp, color = TextMedium)
+                        Text(stringResource(R.string.import_transactions_unit), fontSize = 11.sp, color = TextMedium)
                     }
                 }
                 Box(
@@ -1476,15 +1485,15 @@ private fun ExportInfoDialog(
                 ) {
                     Column {
                         Text("$accCount", fontSize = 22.sp, fontWeight = FontWeight.Black, color = GreenPrimary)
-                        Text("akun", fontSize = 11.sp, color = TextMedium)
+                        Text(stringResource(R.string.import_accounts_unit), fontSize = 11.sp, color = TextMedium)
                     }
                 }
             }
 
             // Info rows
-            InfoRow(icon = PhosphorIcons.Regular.Table, text = "Sheet \"Transaksi\": Tanggal, Waktu, Jenis, Nominal, Nama, Kategori, Akun, Transfer, Biaya Admin")
-            InfoRow(icon = PhosphorIcons.Regular.CreditCard, text = "Sheet \"Akun\": Nama, Tipe, Saldo, Nomor Akhir, Brand")
-            InfoRow(icon = PhosphorIcons.Regular.ShareNetwork, text = "File langsung dibagikan via sistem berbagi HP (WhatsApp, email, Drive, dll.)")
+            InfoRow(icon = PhosphorIcons.Regular.Table, text = stringResource(R.string.export_sheet_transactions))
+            InfoRow(icon = PhosphorIcons.Regular.CreditCard, text = stringResource(R.string.export_sheet_accounts))
+            InfoRow(icon = PhosphorIcons.Regular.ShareNetwork, text = stringResource(R.string.export_share_info))
 
             // Disclaimer
             Box(
@@ -1497,8 +1506,7 @@ private fun ExportInfoDialog(
                     Icon(PhosphorIcons.Regular.Warning, null,
                         tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
                     Text(
-                        "File ekspor menggunakan format DompetKu. Untuk impor kembali ke DompetKu, " +
-                        "gunakan file ini langsung. Format ini berbeda dengan format Money Manager.",
+                        stringResource(R.string.export_disclaimer),
                         fontSize = 12.sp, color = Color(0xFF92400E), lineHeight = 18.sp,
                     )
                 }
@@ -1514,11 +1522,11 @@ private fun ExportInfoDialog(
                 Icon(PhosphorIcons.Regular.ArrowSquareOut, null,
                     modifier = Modifier.size(16.dp).padding(end = 0.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Ekspor Sekarang", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.export_now_label), fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("Batal", color = TextMedium)
+                Text(stringResource(R.string.cancel_label), color = TextMedium)
             }
         }
     }
@@ -1558,8 +1566,8 @@ private fun ImportInfoDialog(
                         tint = GreenPrimary, modifier = Modifier.size(22.dp))
                 }
                 Column {
-                    Text("Impor Data", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
-                    Text("Dari Money Manager · Format XLSX", fontSize = 12.sp, color = TextMedium)
+                    Text(stringResource(R.string.import_info_title), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text(stringResource(R.string.import_info_subtitle), fontSize = 12.sp, color = TextMedium)
                 }
             }
 
@@ -1570,18 +1578,18 @@ private fun ImportInfoDialog(
                     .background(GreenLight).padding(12.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("FORMAT YANG DIDUKUNG", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                    Text(stringResource(R.string.supported_format_title), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                         color = GreenPrimary, letterSpacing = 0.5.sp)
-                    Text("✓  Money Manager (Export → Excel/CSV)",
+                    Text(stringResource(R.string.supported_money_manager),
                         fontSize = 12.sp, color = TextDark, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             // Info rows
-            InfoRow(icon = PhosphorIcons.Regular.Calendar, text = "Kolom Date, Account, Category, Note, IDR/Amount, Income/Expense otomatis dikenali")
-            InfoRow(icon = PhosphorIcons.Regular.ArrowsLeftRight, text = "Transfer-Out akan dikenali sebagai Transfer antar akun")
-            InfoRow(icon = PhosphorIcons.Regular.Tag, text = "Kategori Money Manager otomatis dipetakan ke kategori DompetKu")
-            InfoRow(icon = PhosphorIcons.Regular.UsersThree, text = "Akun baru yang belum ada bisa dibuat otomatis atau dihubungkan ke akun yang ada")
+            InfoRow(icon = PhosphorIcons.Regular.Calendar, text = stringResource(R.string.import_info_columns))
+            InfoRow(icon = PhosphorIcons.Regular.ArrowsLeftRight, text = stringResource(R.string.import_info_transfer))
+            InfoRow(icon = PhosphorIcons.Regular.Tag, text = stringResource(R.string.import_info_category))
+            InfoRow(icon = PhosphorIcons.Regular.UsersThree, text = stringResource(R.string.import_info_accounts))
 
             // Disclaimer
             Box(
@@ -1594,9 +1602,7 @@ private fun ImportInfoDialog(
                     Icon(PhosphorIcons.Regular.Warning, null,
                         tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
                     Text(
-                        "Pembacaan data otomatis — penempatan kategori dan jenis transaksi " +
-                        "mungkin tidak 100% akurat. Selalu cek hasilnya di layar konfirmasi " +
-                        "sebelum menekan Gabungkan atau Ganti Semua Data.",
+                        stringResource(R.string.import_disclaimer),
                         fontSize = 12.sp, color = Color(0xFF92400E), lineHeight = 18.sp,
                     )
                 }
@@ -1612,11 +1618,11 @@ private fun ImportInfoDialog(
                 Icon(PhosphorIcons.Regular.FolderOpen, null,
                     modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Pilih File XLSX", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.pick_xlsx_label), fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("Batal", color = TextMedium)
+                Text(stringResource(R.string.cancel_label), color = TextMedium)
             }
         }
     }

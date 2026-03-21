@@ -341,7 +341,210 @@ Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN d
 
 ---
 
+### AUDIT AKTIF — 2026-03-22 (belum ada code change)
+
+**Status sesi ini**
+- User minta audit penuh dulu, jangan ubah code aplikasi dulu.
+- Di sesi ini hanya boleh kumpulkan temuan, susun rencana kerja, dan update `HANDOFF.md`.
+- Build yang diverifikasi di sesi ini: `assembleDebug` berhasil.
+
+**Tujuan audit**
+1. Cari akar masalah white screen saat setup PIN pertama kali.
+2. Audit bottleneck performa utama: unlock PIN, perpindahan Home ke Profile, render/list cost.
+3. Audit widget budget/predictor di Home: gesture, animasi, dan perubahan layout.
+4. Audit jiggle mode/reorder akun vs requirement drag-and-drop.
+5. Audit back navigation di tab Analisis.
+6. Audit konsistensi language toggle dan string hardcoded.
+
+**Temuan utama**
+
+**1. PIN setup first-enable → white screen**
+- Akar masalah paling kuat ada di kombinasi:
+  - `RootViewModel.startDestination` yang reaktif terhadap `pinEnabled`
+  - `NavHost(startDestination = start)` yang ikut membaca state itu terus-menerus
+  - flow sukses `PinSetupScreen` yang hanya melakukan `popBackStack()`
+- File terkait:
+  - `app/src/main/java/com/dompetku/ui/RootViewModel.kt`
+  - `app/src/main/java/com/dompetku/ui/navigation/NavGraph.kt`
+  - `app/src/main/java/com/dompetku/ui/screen/pin/PinSetupScreen.kt`
+- Detail logika:
+  - Setelah PIN baru tersimpan, `PinSetupScreen` memanggil `viewModel.setPinEnabled(true)` lalu `onSuccess()`.
+  - Begitu `pinEnabled = true`, `RootViewModel.startDestination` berubah dari `Screen.Main.route` menjadi `Screen.PinLock.route`.
+  - Pada saat yang sama, route `PinSetup` hanya `popBackStack()`.
+- Hipotesis audit:
+  - `startDestination` seharusnya hanya dipakai untuk initial route saat app cold start, bukan berubah saat user sedang berada di flow aktif.
+  - Reaktifnya `startDestination` saat setup PIN kemungkinan merusak sinkronisasi back stack/graph dan memunculkan blank screen.
+  - Gejala user cocok: setelah blank screen, back berikutnya keluar app karena stack utama sudah tidak sehat.
+
+**2. Delay 1–2 detik setelah digit ke-6 saat unlock PIN**
+- Akar masalah sangat mungkin valid: hashing/verifikasi PBKDF2 masih berjalan di main thread.
+- File terkait:
+  - `app/src/main/java/com/dompetku/ui/screen/pin/PinViewModel.kt`
+  - `app/src/main/java/com/dompetku/util/PinHasher.kt`
+- `PinHasher.verifyAndUpgrade()` memakai `PBKDF2WithHmacSHA256` 100.000 iterasi.
+- `PinViewModel.verifyPin()` dan `savePin()` menjalankan kerja itu di `viewModelScope.launch` default tanpa `Dispatchers.Default`.
+- Dampak:
+  - Setelah digit ke-6 ditekan, UI bisa terasa freeze 1–2 detik sebelum navigation callback sukses jalan.
+
+**3. Home → Profile terasa lambat**
+- Bottleneck yang terlihat saat audit:
+  - `ProfileViewModel.uiState` menggabungkan `userPrefs.appPrefsFlow`, `transactionRepo.observeAll()`, dan `accountRepo.observeAll()`.
+  - Padahal untuk first paint layar Profile, kebutuhan awal utamanya hanya `prefs`, `txnCount`, `accountCount`, dan sebagian kecil data akun.
+- File terkait:
+  - `app/src/main/java/com/dompetku/ui/screen/profile/ProfileViewModel.kt`
+  - `app/src/main/java/com/dompetku/data/repository/Repositories.kt`
+- Dampak:
+  - Masuk ke Profile ikut memicu hydrate seluruh transaksi ke domain object.
+  - `TransactionRepository.observeAll()` juga parse `detailsJson` dan `attachmentIdsJson` untuk semua transaksi.
+  - Ini memperlambat tab switch walau animasi tab sendiri sederhana.
+
+**4. Widget budget/predictor di Home tidak smooth**
+- File terkait: `app/src/main/java/com/dompetku/ui/screen/home/HomeScreen.kt`
+- Temuan:
+  - Gesture memakai `detectHorizontalDragGestures`.
+  - Tiap delta drag memanggil `scope.launch { offsetPx.snapTo(newOffset) }`.
+  - Setelah drag selesai, `carouselPage` langsung diubah dan konten kartu utama di-swap hard cut.
+  - Tinggi `BudgetCard` dan `PredictorCard` berbeda, tetapi parent tidak meng-animate perubahan tinggi/layout.
+  - Peek-card sekarang hanya muncul saat `isDragging`, jadi continuity visual lebih rendah dibanding transisi animasi penuh.
+- Kesimpulan:
+  - Masalah ada pada kombinasi gesture loop, hard page swap, dan absennya animated size/layout transition.
+
+**5. Jiggle mode reorder akun belum sesuai desain**
+- File terkait: `app/src/main/java/com/dompetku/ui/screen/accounts/AccountsScreen.kt`
+- Temuan:
+  - Jiggle animation ada dan cukup baik.
+  - Reorder masih menggunakan tombol panah kiri/kanan di card.
+  - Layout akun masih dibangun dari `accounts.chunked(2).forEach` di `Column`.
+  - Tidak ada long-press drag state, tidak ada drag overlay/scale-up aktif, tidak ada animated placement untuk card lain.
+- Kesimpulan:
+  - Ini bukan bug kecil, tetapi memang arsitektur reorder saat ini belum sesuai requirement drag-and-drop.
+
+**6. Back di tab Analisis langsung keluar app**
+- File terkait:
+  - `app/src/main/java/com/dompetku/ui/MainScaffold.kt`
+  - `app/src/main/java/com/dompetku/ui/screen/analytics/AnalyticsScreen.kt`
+  - `app/src/main/java/com/dompetku/ui/navigation/NavGraph.kt`
+- Temuan:
+  - Semua tab utama hidup di satu `MainScaffold` dengan state lokal `currentTab`.
+  - Tidak ada `BackHandler` yang mengatur:
+    - tab non-Home → kembali ke Home
+    - tab Home → tampilkan dialog konfirmasi keluar
+- Akibat:
+  - Saat user ada di Analisis lalu tekan back sistem, Android langsung mem-pop activity dan app keluar.
+
+**7. Language toggle aktif sebagian, tapi belum konsisten**
+- Hal yang sudah benar:
+  - state bahasa disimpan via `UserPreferences.setLang()`
+  - `MainActivity` memanggil `AppCompatDelegate.setApplicationLocales(...)`
+  - `values/strings.xml` dan `values-en/strings.xml` sudah ada
+- Masalah nyata:
+  - Masih banyak string hardcoded di Kotlin, terutama di `HomeScreen.kt`, `ProfileScreen.kt`, `AccountsScreen.kt`, `AccountDetailScreen.kt`, `TransactionsScreen.kt`, dan beberapa sheet/detail screen.
+  - `CommonComponents.kt` masih memaksa formatter tanggal `Locale("id", "ID")`.
+  - Beberapa label pakai `stringResource`, tetapi sibling text di screen yang sama masih hardcoded, jadi hasil toggle campur Indonesia/English.
+- Kesimpulan:
+  - Toggle bahasa bekerja, tetapi coverage translasi belum complete dan ada locale-sensitive formatter yang masih dikunci ke Indonesia.
+
+**Masalah performa tambahan yang ikut tercatat**
+- `NavGraph.kt` masih membentuk `allTxns` dari `txnUiState.grouped.flatMap { ... }` untuk route `Main` dan `AccountDetail`.
+- `MainScaffold` masih punya parameter `allTxns`, tetapi parameter itu tidak dipakai.
+- `AccountDetailScreen.kt` masih menerima semua transaksi, filter + sort ulang di composable, render list via `verticalScroll`, dan memakai lookup `accounts.find` per row.
+- `TransactionsScreen.kt` sudah lebih baik, tetapi virtualisasi masih per grup tanggal; semua transaksi dalam satu tanggal tetap dirender sekaligus.
+
+**Planning perbaikan (belum dieksekusi)**
+
+**Prioritas 1 — stabilkan flow PIN**
+1. Pisahkan initial route vs runtime lock navigation.
+2. Hentikan perubahan `startDestination` yang reaktif setelah app sudah hidup.
+3. Ubah outcome sukses `PinSetup` menjadi navigation flow yang eksplisit dan aman, bukan sekadar `popBackStack()`.
+
+**Prioritas 2 — percepat PIN**
+1. Pindahkan `PinHasher.hash()` dan `verifyAndUpgrade()` ke `Dispatchers.Default`.
+2. Pastikan callback sukses/gagal PIN hanya mengurus state ringan di main thread.
+
+**Prioritas 3 — ringankan Home/Profile**
+1. Ganti dependency full `observeAll()` di `ProfileViewModel` dengan query count/ringkasan yang ringan.
+2. Hapus materialisasi `allTxns` yang tidak dipakai di `NavGraph/MainScaffold`.
+3. Evaluasi query spesifik untuk `AccountDetail`.
+
+**Prioritas 4 — perbaiki widget Home**
+1. Refactor gesture supaya tidak spawn coroutine per drag delta.
+2. Tambahkan transisi halaman yang tetap smooth sesudah drag selesai.
+3. Tambahkan animated size/placement agar pergantian Budget ↔ Predictor tidak membuat konten bawah loncat.
+
+**Prioritas 5 — reorder akun sesuai desain**
+1. Ganti model tombol panah menjadi drag-and-drop.
+2. Long-press untuk masuk drag state.
+3. Tambahkan scale/haptic feedback item aktif.
+4. Tambahkan animated placement untuk card lain agar reposisi natural.
+
+**Prioritas 6 — back navigation policy**
+1. Tambah `BackHandler` di shell utama.
+2. Policy target:
+   - jika tab != Home → back ke Home
+   - jika tab == Home → tampil dialog konfirmasi keluar
+
+**Prioritas 7 — language consistency sweep**
+1. Inventaris string hardcoded per screen/component.
+2. Pindahkan ke resources `values` + `values-en`.
+3. Hapus formatter teks/tanggal yang masih memaksa locale Indonesia.
+4. Verifikasi ulang page utama dan sheet/detail yang sering dipakai.
+
+**Catatan keputusan**
+- Sesi ini belum mengubah code aplikasi; hanya audit source + build verification.
+- Urutan implementasi yang paling aman nanti:
+  1. stabilkan PIN flow
+  2. optimasi PIN
+  3. repair widget Home
+  4. back navigation policy
+  5. language sweep
+  6. drag-and-drop reorder akun
+
+**Progress implementasi setelah audit**
+- `DONE` Stabilkan flow PIN level root:
+  - `DompetKuNavHost` sekarang mengunci `startDestination` hanya untuk cold start, tidak lagi ikut berubah saat `pinEnabled` berubah di tengah sesi.
+- `DONE` Optimasi PIN:
+  - hash dan verify PIN dipindahkan ke background thread (`Dispatchers.Default`) agar unlock/setup tidak memblokir main thread.
+- `DONE` Back navigation shell:
+  - tab non-Home sekarang akan kembali ke Home dulu saat back.
+  - Home sekarang menampilkan dialog konfirmasi keluar.
+- `DONE` Bottleneck awal Profile/NavGraph:
+  - Profile count sekarang pakai query count ringan, tidak lagi hydrate full transaction list hanya untuk menghitung jumlah.
+  - materialisasi `allTxns` yang tidak dipakai di `MainScaffold` sudah dihapus.
+  - Account detail sekarang memakai query transaksi account-spesifik, bukan flatten seluruh state transaksi.
+- `DONE` Repair awal widget Home:
+  - swipe logic diringankan, transisi kartu diubah ke animated content, dan container kartu ikut `animateContentSize` agar perubahan tinggi lebih smooth.
+  - Ini adalah perbaikan tahap 1; feel di device nyata masih perlu dicek user.
+- `PARTIAL` Language consistency:
+  - beberapa label baru yang disentuh sudah dipindahkan ke resources.
+  - formatter tanggal shared tidak lagi dipaksa ke locale Indonesia.
+- `TODO` Drag-and-drop reorder akun belum dikerjakan di patch ini; implementasi saat ini masih tombol panah.
+
+---
+
 ## LOG PERUBAHAN
+
+### 2026-03-22 — Fix batch 1: PIN flow, back nav, Home widget, lightweight data paths
+- **PIN flow stabilized:** `DompetKuNavHost` sekarang memakai `startDestination` hanya saat cold start. Ini mencegah root graph berubah di tengah sesi ketika `pinEnabled` baru saja diaktifkan dari `PinSetup`.
+- **PIN performance:** `PinViewModel` memindahkan `PinHasher.hash()` dan verifikasi PIN ke `Dispatchers.Default`, sehingga PBKDF2 100k iterasi tidak lagi memblokir main thread saat digit ke-6 ditekan.
+- **Back navigation utama:** `MainScaffold` sekarang intercept system back. Jika user ada di tab selain Home, back kembali ke Home dulu; jika sudah di Home, tampil dialog konfirmasi keluar.
+- **Home widget repair (tahap 1):** swipe budget/predictor diganti ke gesture yang lebih ringan dan transisi konten animatif, plus container ikut `animateContentSize()` agar pergantian tinggi kartu tidak hard cut ke konten bawah.
+- **Profile performance:** `TransactionDao` + `AccountDao` punya `observeCount()` baru. `ProfileViewModel` sekarang memakai count ringan, bukan `observeAll()` transaksi penuh hanya untuk menghitung jumlah.
+- **NavGraph/MainScaffold cleanup:** materialisasi `allTxns` yang tidak dipakai di route `Main` dihapus.
+- **Account detail performance:** tambah query `observeLinkedToAccount(accountId)` dan route detail akun sekarang mengamati transaksi akun-spesifik, bukan flatten seluruh grouped transaction state lalu filter di UI.
+- **Language consistency (awal):** tambah beberapa string resource baru untuk label yang disentuh dan formatter tanggal shared tidak lagi memaksa `Locale("id", "ID")`.
+- **Build verification:** `assembleDebug` berhasil setelah patch batch ini.
+
+### 2026-03-22 — Audit penuh: PIN flow, performa, widget, back nav, language
+- Belum ada code change aplikasi. Sesi ini khusus audit source untuk 6 issue utama yang dilaporkan user.
+- Tambah section `AUDIT AKTIF — 2026-03-22` ke `HANDOFF.md` berisi akar masalah, hipotesis teknis, prioritas, dan planning.
+- Temuan audit utama:
+  - White screen saat enable PIN pertama kemungkinan berasal dari `startDestination` yang ikut berubah saat `pinEnabled = true`, lalu bentrok dengan flow `popBackStack()` dari `PinSetup`.
+  - Delay unlock PIN kemungkinan berasal dari PBKDF2 verify/hash yang masih berjalan di main thread.
+  - Home ke Profile lambat karena `ProfileViewModel` masih bergantung pada full `observeAll()` transaksi.
+  - Widget budget/predictor tidak smooth karena gesture loop spawn coroutine per drag delta, page swap masih hard cut, dan tinggi kartu tidak dianimasikan.
+  - Jiggle mode masih arsitektur tombol panah, belum drag-and-drop.
+  - Back di tab Analisis langsung keluar app karena shell utama belum punya `BackHandler`.
+  - Language toggle aktif sebagian, tetapi masih banyak string hardcoded dan formatter yang memaksa locale Indonesia.
 
 ### 2026-03-22 — Corpus-level date format detection
 - **Refactor arsitektur deteksi tanggal** dari per-row menjadi per-sheet (corpus-level). Sebelumnya swap month↔day dilakukan per baris berdasarkan apakah hasilnya masa depan — ini tidak aman untuk file DompetKu yang mungkin punya sedikit transaksi masa depan (tagihan, budget).
@@ -469,3 +672,25 @@ Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN d
 - **Biometric confirmation:** toggle biometrik di `ProfileScreen.kt` sekarang menampilkan `BiometricPrompt` dulu saat enable. Hanya `onAuthenticationSucceeded` yang mengaktifkan `bioEnabled`.
 - **Language switch aktif:** tambah `values/strings.xml` + `values-en/strings.xml`, dependency `androidx.appcompat:appcompat`, dan locale apply via `AppCompatDelegate.setApplicationLocales()` di `MainActivity.kt`. Label inti di Home/Transactions/Accounts/Analytics/Profile serta komponen shared utama mulai dipindahkan ke resources.
 - **Build verification:** `assembleDebug` berhasil setelah clean generated KSP cache lokal.
+
+### 2026-03-22 â€” Tahap A: drag-and-drop reorder akun
+- **AccountsScreen refactor:** implement reorder kartu akun berbasis long-press drag-and-drop, menggantikan tombol panah kiri/kanan lama. Struktur list sekarang memakai `LazyVerticalGrid` 2 kolom dengan state lokal `draftAccounts`, `draggedId`, `dragOffset`, dan `itemBounds`.
+- **Gesture & feedback:** drag hanya aktif saat `editMode`; long-press pertama tetap bisa masuk mode edit, lalu kartu dapat ditahan dan digeser. Saat drag dimulai dan saat swap antar posisi terjadi, `HapticHelper` dipanggil untuk feedback yang lebih terasa.
+- **Animasi:** kartu yang sedang di-drag sedikit scale up, mendapat `zIndex` lebih tinggi, dan kartu lain memakai `animateItemPlacement(...)` supaya perpindahan posisi terasa lebih halus dan tidak hard cut.
+- **UI cleanup:** aksi bawah kartu kini fokus ke `Edit` dan `Hapus`, plus indikator drag handle saat edit mode. Ditambah helper text reorder dan string resources baru untuk hint + dialog hapus akun.
+- **Build verification:** `assembleDebug` berhasil setelah refactor Tahap A.
+
+### 2026-03-22 â€” Tahap B: language consistency sweep
+- **Resource expansion:** tambah batch string resource baru di `values/strings.xml` dan `values-en/strings.xml` untuk area Profile, Home budget/predictor, dan Analytics summary/legend/card labels.
+- **ProfileScreen cleanup:** chooser ekspor, snackbar hasil import, loading overlay, section About/Data labels tertentu, toggle vibration, subtitle ekspor/impor, serta dialog hapus semua sekarang memakai string resource agar ikut locale aktif.
+- **HomeScreen cleanup:** placeholder nama user, label budget card, indikator sisa hari ini, subtitle pengeluaran hari ini, beberapa label predictor/budget sheet utama mulai dipindah ke resource agar toggle bahasa tidak lagi campur di area yang paling sering terlihat.
+- **AnalyticsScreen cleanup:** filter "Tahun Ini", legend pemasukan/pengeluaran, title salary insight, beberapa label savings/trend, dan sejumlah label ringkasan kini memakai string resource.
+- **Catatan sisa kerja:** masih ada hardcoded copy yang lebih panjang di beberapa dialog import/export dan beberapa deskripsi detail insight yang belum disapu penuh di batch ini, tetapi area yang paling terlihat oleh user sehari-hari sudah jauh lebih konsisten.
+- **Build verification:** `assembleDebug` berhasil setelah Tahap B.
+
+### 2026-03-22 â€” Tahap C: polish + verification
+- **Home budget sheet polish:** label-label utama di `BudgetSheet` (`Atur Budget Bulanan`, target tabungan, analisis rekomendasi, custom budget, apply budget) kini ikut resource locale sehingga alur budget tidak lagi campur bahasa setelah toggle.
+- **Profile import/export dialog polish:** title/subtitle dialog, unit transaksi/akun, CTA `Gabungkan/Ganti Semua Data`, info rows ekspor/impor, disclaimer, dan tombol pilih file/ekspor sekarang ikut resource `ID/EN`.
+- **Analytics polish:** header `FUN FACT`, `MISI MINGGU INI`, dan message status savings rate kini ikut resource locale yang sama.
+- **Verification pass:** `assembleDebug` kembali berhasil setelah batch polish Tahap C.
+- **Residual note:** masih ada sejumlah hardcoded copy yang lebih dalam di flow import mapping/profile edit sheet yang belum disapu total, tetapi area utama yang dilihat user setiap hari dan seluruh area yang disentuh Tahap A/B/C sudah stabil dan konsisten secara build.

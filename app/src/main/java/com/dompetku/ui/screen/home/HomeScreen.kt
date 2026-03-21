@@ -2,9 +2,10 @@ package com.dompetku.ui.screen.home
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -19,11 +20,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import kotlinx.coroutines.launch
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -53,6 +50,7 @@ import com.dompetku.ui.theme.*
 import com.dompetku.util.CurrencyFormatter
 import com.dompetku.util.DateUtils
 import kotlin.math.min
+import kotlin.math.sign
 
 @Composable
 fun HomeScreen(
@@ -101,7 +99,7 @@ fun HomeScreen(
                 Column {
                     Text(DateUtils.greeting() + ",", fontSize = 11.sp, color = TextLight)
                     Text(
-                        state.prefs.userProfile.name.ifEmpty { "Pengguna" },
+                        state.prefs.userProfile.name.ifEmpty { stringResource(R.string.home_user_placeholder) },
                         fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = TextDark,
                     )
                 }
@@ -164,69 +162,54 @@ fun HomeScreen(
             // Budget + Predictor carousel
             var carouselPage  by remember { mutableIntStateOf(0) }
             var showPredictor by remember { mutableStateOf(false) }
-            val scope          = rememberCoroutineScope()
-            val offsetPx       = remember { Animatable(0f) }
-            var cardWidthPx    by remember { mutableIntStateOf(0) }
-            // BUG-07 fix: only render peek card when actually dragging
-            val isDragging     by remember { derivedStateOf { offsetPx.value != 0f } }
+            var dragDistancePx by remember { mutableFloatStateOf(0f) }
 
             Column(modifier = Modifier.fillMaxWidth()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onSizeChanged { cardWidthPx = it.width }
-                        .pointerInput(carouselPage) {
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    val threshold = cardWidthPx * 0.25f
-                                    if (offsetPx.value < -threshold && carouselPage < 1) {
-                                        carouselPage = 1
-                                    } else if (offsetPx.value > threshold && carouselPage > 0) {
-                                        carouselPage = 0
+                        .animateContentSize(
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessLow,
+                            )
+                        )
+                        .draggable(
+                            orientation = Orientation.Horizontal,
+                            state = rememberDraggableState { delta ->
+                                dragDistancePx += delta
+                            },
+                            onDragStopped = { velocity ->
+                                val swipeSignal = dragDistancePx + (velocity * 0.08f)
+                                val direction = swipeSignal.sign.toInt()
+                                val thresholdReached = kotlin.math.abs(swipeSignal) > 140f
+                                if (thresholdReached) {
+                                    when {
+                                        direction < 0 && carouselPage < 1 -> carouselPage = 1
+                                        direction > 0 && carouselPage > 0 -> carouselPage = 0
                                     }
-                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
-                                },
-                                onDragCancel = {
-                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
-                                },
-                                onHorizontalDrag = { _, delta ->
-                                    val newOffset = (offsetPx.value + delta)
-                                        .coerceIn(
-                                            if (carouselPage >= 1) -cardWidthPx.toFloat() else -cardWidthPx * 0.4f,
-                                            if (carouselPage <= 0) cardWidthPx.toFloat()  else  cardWidthPx * 0.4f,
-                                        )
-                                    scope.launch { offsetPx.snapTo(newOffset) }
-                                },
-                            )
-                        },
+                                }
+                                dragDistancePx = 0f
+                            },
+                        ),
                 ) {
-                    // Previous card: only peek when dragging (BUG-07)
-                    if (carouselPage == 1 && isDragging) {
-                        Box(
-                            modifier = Modifier
-                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value - cardWidthPx).toInt(), 0) }
-                                .fillMaxWidth(),
-                        ) {
-                            BudgetCard(
-                                budgetPct    = budgetPct,
-                                monthExp     = state.monthExpense,
-                                budget       = state.monthlyBudget,
-                                todayRemain  = todayRemain,
-                                todayExpense = state.todayExpense,
-                                daysLeft     = daysLeft,
-                                hidden       = hidden,
-                                onEdit       = { showBudgetSheet = true },
-                                modifier     = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-                    // Current card
-                    Box(
-                        modifier = Modifier
-                            .offset { androidx.compose.ui.unit.IntOffset(offsetPx.value.toInt(), 0) }
-                            .fillMaxWidth(),
-                    ) {
-                        if (carouselPage == 0) {
+                    AnimatedContent(
+                        targetState = carouselPage,
+                        transitionSpec = {
+                            val forward = targetState > initialState
+                            slideInHorizontally(
+                                animationSpec = tween(260, easing = FastOutSlowInEasing),
+                                initialOffsetX = { width -> if (forward) width / 3 else -width / 3 },
+                            ) + fadeIn(tween(220)) togetherWith
+                                slideOutHorizontally(
+                                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                    targetOffsetX = { width -> if (forward) -width / 4 else width / 4 },
+                                ) + fadeOut(tween(160))
+                        },
+                        label = "homeBudgetCarousel",
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { page ->
+                        if (page == 0) {
                             BudgetCard(
                                 budgetPct    = budgetPct,
                                 monthExp     = state.monthExpense,
@@ -239,21 +222,6 @@ fun HomeScreen(
                                 modifier     = Modifier.fillMaxWidth(),
                             )
                         } else {
-                            PredictorCard(
-                                monthExpense = state.monthExpense,
-                                daysLeft     = daysLeft,
-                                onTap        = { showPredictor = true },
-                                modifier     = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-                    // Next card: only peek when dragging (BUG-07)
-                    if (carouselPage == 0 && isDragging) {
-                        Box(
-                            modifier = Modifier
-                                .offset { androidx.compose.ui.unit.IntOffset((offsetPx.value + cardWidthPx).toInt(), 0) }
-                                .fillMaxWidth(),
-                        ) {
                             PredictorCard(
                                 monthExpense = state.monthExpense,
                                 daysLeft     = daysLeft,
@@ -277,7 +245,7 @@ fun HomeScreen(
                                 .background(if (i == carouselPage) GreenPrimary else Color(0xFFD1D5DB))
                                 .clickable {
                                     carouselPage = i
-                                    scope.launch { offsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                    dragDistancePx = 0f
                                 },
                         )
                     }
@@ -298,14 +266,14 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             ) {
-                Text("Akun Saya", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                Text(stringResource(R.string.home_accounts_section), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
                 TextButton(onClick = { onTabChange(NavTab.Accounts) }) {
-                    Text("Lihat semua", color = GreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.see_all_label), color = GreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
             if (state.accounts.isEmpty()) {
                 WhiteCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("Belum ada akun", color = TextLight, fontSize = 12.sp)
+                    Text(stringResource(R.string.home_no_accounts), color = TextLight, fontSize = 12.sp)
                 }
             } else {
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -319,14 +287,14 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             ) {
-                Text("Transaksi Terbaru", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                Text(stringResource(R.string.home_recent_transactions), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
                 TextButton(onClick = { onTabChange(NavTab.Transactions) }) {
-                    Text("Lihat semua", color = GreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.see_all_label), color = GreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
             WhiteCard(modifier = Modifier.fillMaxWidth(), padding = 0.dp) {
                 if (state.recentTxns.isEmpty()) {
-                    Text("Belum ada transaksi", color = TextLight, fontSize = 13.sp,
+                    Text(stringResource(R.string.home_no_transactions), color = TextLight, fontSize = 13.sp,
                         modifier = Modifier.padding(20.dp).align(Alignment.CenterHorizontally))
                 } else {
                     state.recentTxns.forEachIndexed { i, txn ->
@@ -334,7 +302,7 @@ fun HomeScreen(
                         TransactionRow(
                             note          = txn.note,
                             category      = txn.category,
-                            accountName   = state.accountMap[txn.accountId]?.name ?: "?", // O(1)
+                            accountName   = state.accountMap[txn.accountId]?.name ?: stringResource(R.string.analytics_total_label), // O(1)
                             toAccountName = toAcc?.name,
                             date          = txn.date,
                             time          = txn.time,
@@ -384,8 +352,8 @@ private fun BudgetCard(
     WhiteCard(modifier = modifier) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-            Text("Anggaran Bulanan", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
-            TextButton(onClick = onEdit) { Text("Edit", color = GreenPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+            Text(stringResource(R.string.home_budget_title), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+            TextButton(onClick = onEdit) { Text(stringResource(R.string.edit_label), color = GreenPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             val ringColor = when { budgetPct >= 90 -> RedExpense; budgetPct >= 70 -> Color(0xFFF59E0B); else -> GreenPrimary }
@@ -397,20 +365,25 @@ private fun BudgetCard(
                 Text("$budgetPct%", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
             }
             Column(modifier = Modifier.weight(1f)) {
-                BudgetRow("Terpakai", CurrencyFormatter.format(monthExp))
-                BudgetRow("Limit",    CurrencyFormatter.format(budget))
-                BudgetRow("Sisa/hari", if (budgetPct >= 100) "Habis!" else CurrencyFormatter.compact(if (daysLeft > 0) (budget - monthExp) / daysLeft else 0L), if (budgetPct >= 100) RedExpense else GreenPrimary)
+                BudgetRow(stringResource(R.string.home_budget_used), CurrencyFormatter.format(monthExp))
+                BudgetRow(stringResource(R.string.home_budget_limit), CurrencyFormatter.format(budget))
+                BudgetRow(
+                    stringResource(R.string.home_budget_remaining_per_day),
+                    if (budgetPct >= 100) stringResource(R.string.home_budget_empty)
+                    else CurrencyFormatter.compact(if (daysLeft > 0) (budget - monthExp) / daysLeft else 0L),
+                    if (budgetPct >= 100) RedExpense else GreenPrimary,
+                )
             }
         }
         Spacer(Modifier.height(10.dp))
         Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (todayRemain < 0) RedLight else GreenLight).padding(horizontal = 12.dp, vertical = 9.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Column {
-                    Text("SISA HARI INI", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = if (todayRemain < 0) RedExpense else GreenPrimary, letterSpacing = 0.5.sp)
-                    Text(if (todayRemain < 0) "Lewat batas" else CurrencyFormatter.format(todayRemain), fontSize = 15.sp, fontWeight = FontWeight.Black, color = if (todayRemain < 0) RedExpense else GreenPrimary)
+                    Text(stringResource(R.string.home_budget_remaining_today), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = if (todayRemain < 0) RedExpense else GreenPrimary, letterSpacing = 0.5.sp)
+                    Text(if (todayRemain < 0) stringResource(R.string.home_budget_over_limit) else CurrencyFormatter.format(todayRemain), fontSize = 15.sp, fontWeight = FontWeight.Black, color = if (todayRemain < 0) RedExpense else GreenPrimary)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("Keluar hari ini", fontSize = 9.sp, color = TextLight)
+                    Text(stringResource(R.string.home_budget_spent_today), fontSize = 9.sp, color = TextLight)
                     Text(CurrencyFormatter.compact(todayExpense), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextDark)
                 }
             }
@@ -434,19 +407,19 @@ private fun PredictorCard(monthExpense: Long, daysLeft: Int, onTap: () -> Unit =
     ) {
         Column {
             Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Text("Prediksi Keuangan", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                Text(stringResource(R.string.home_prediction_title), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(PhosphorIcons.Regular.TrendUp, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(16.dp))
                     Box(
                         modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 3.dp)
-                    ) { Text("Detail ›", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFA7F3D0)) }
+                    ) { Text(stringResource(R.string.home_prediction_detail), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFA7F3D0)) }
                 }
             }
-            Text("Estimasi pengeluaran bulan ini", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
+            Text(stringResource(R.string.home_prediction_subtitle), fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DarkStat("AVG/HARI",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
-                DarkStat("EST. BULAN", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
-                DarkStat("SISA HARI",  "$daysLeft hr",                        Color.White,        Modifier.weight(1f))
+                DarkStat(stringResource(R.string.home_stat_avg_daily), CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+                DarkStat(stringResource(R.string.home_stat_est_month), CurrencyFormatter.compact(estMonth), Color.White, Modifier.weight(1f))
+                DarkStat(stringResource(R.string.home_stat_days_left), stringResource(R.string.home_days_left_short, daysLeft), Color.White, Modifier.weight(1f))
             }
         }
     }
@@ -480,8 +453,8 @@ private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: (
                 modifier              = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             ) {
                 Column {
-                    Text("Prediksi Keuangan", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
-                    Text("Estimasi pengeluaran bulanmu", fontSize = 12.sp, color = TextLight)
+                    Text(stringResource(R.string.home_prediction_sheet_title), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                    Text(stringResource(R.string.home_prediction_sheet_subtitle), fontSize = 12.sp, color = TextLight)
                 }
                 IconButton(
                     onClick  = onDismiss,
@@ -498,9 +471,9 @@ private fun PredictorDetailSheet(monthExpense: Long, daysLeft: Int, onDismiss: (
                     .padding(16.dp),
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DarkStat("AVG/HARI",   CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
-                    DarkStat("EST. BULAN", CurrencyFormatter.compact(estMonth),  Color.White,        Modifier.weight(1f))
-                    DarkStat("SISA HARI",  "$daysLeft hr",                        Color.White,        Modifier.weight(1f))
+                    DarkStat(stringResource(R.string.home_stat_avg_daily), CurrencyFormatter.compact(avgDaily), Color(0xFFA7F3D0), Modifier.weight(1f))
+                    DarkStat(stringResource(R.string.home_stat_est_month), CurrencyFormatter.compact(estMonth), Color.White, Modifier.weight(1f))
+                    DarkStat(stringResource(R.string.home_stat_days_left), stringResource(R.string.home_days_left_short, daysLeft), Color.White, Modifier.weight(1f))
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -625,7 +598,7 @@ private fun BudgetSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Text("Atur Budget Bulanan", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
+            Text(stringResource(R.string.home_budget_sheet_title), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
                 color = TextDark, modifier = Modifier.padding(bottom = 16.dp))
             Box(
                 modifier = Modifier
@@ -635,13 +608,13 @@ private fun BudgetSheet(
                     .padding(horizontal = 18.dp, vertical = 16.dp),
             ) {
                 Column {
-                    Text("Total Saldo Saat Ini", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
+                    Text(stringResource(R.string.home_budget_sheet_total_balance), fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
                     Spacer(Modifier.height(4.dp))
                     Text(CurrencyFormatter.format(totalBalance), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                        Text("Sisa hari bulan ini", fontSize = 11.sp, color = Color.White.copy(alpha = 0.75f))
-                        Text("$daysLeft hari", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                        Text(stringResource(R.string.home_budget_sheet_days_left), fontSize = 11.sp, color = Color.White.copy(alpha = 0.75f))
+                        Text(stringResource(R.string.home_days_left_full, daysLeft), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                     }
                 }
             }
@@ -651,7 +624,7 @@ private fun BudgetSheet(
                     horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 ) {
-                    Text("TARGET TABUNGAN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
+                    Text(stringResource(R.string.home_budget_sheet_target), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp)
                     Text("${targetPct.toInt()}%", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = GreenPrimary)
                 }
                 Slider(
@@ -667,12 +640,12 @@ private fun BudgetSheet(
             }
             Spacer(Modifier.height(10.dp))
             WhiteCard(modifier = Modifier.fillMaxWidth()) {
-                Text("ANALISIS REKOMENDASI", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 10.dp))
+                Text(stringResource(R.string.home_budget_sheet_analysis), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 10.dp))
                 listOf(
-                    "Ditabung"             to CurrencyFormatter.format(ditabung),
-                    "Bisa Dibelanjakan"    to CurrencyFormatter.format(bisaDibelanjakan),
-                    "Budget Final Dipakai" to CurrencyFormatter.format(budgetFinal),
-                    "Limit Harian Ideal"   to if (limitHarian > 0) CurrencyFormatter.format(limitHarian) else "Rp 0",
+                    stringResource(R.string.home_budget_sheet_saved) to CurrencyFormatter.format(ditabung),
+                    stringResource(R.string.home_budget_sheet_spendable) to CurrencyFormatter.format(bisaDibelanjakan),
+                    stringResource(R.string.home_budget_sheet_final) to CurrencyFormatter.format(budgetFinal),
+                    stringResource(R.string.home_budget_sheet_daily_limit) to if (limitHarian > 0) CurrencyFormatter.format(limitHarian) else "Rp 0",
                 ).forEach { (label, value) ->
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                         Text(label, fontSize = 13.sp, color = TextDark)
@@ -681,7 +654,7 @@ private fun BudgetSheet(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Text("ATAU MASUKKAN NOMINAL SENDIRI", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 8.dp))
+            Text(stringResource(R.string.home_budget_sheet_custom_prompt), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 8.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
@@ -695,12 +668,12 @@ private fun BudgetSheet(
                 ) {
                     if (useCustom) Icon(PhosphorIcons.Regular.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))
                 }
-                Text("Pakai nominal kustom", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (useCustom) GreenPrimary else TextDark)
+                Text(stringResource(R.string.home_budget_sheet_use_custom), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (useCustom) GreenPrimary else TextDark)
             }
             if (useCustom) {
                 Spacer(Modifier.height(8.dp))
                 WhiteCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("BUDGET KUSTOM (RP)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 6.dp))
+                    Text(stringResource(R.string.home_budget_sheet_custom_label), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextLight, letterSpacing = 0.6.sp, modifier = Modifier.padding(bottom = 6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Rp", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextLight)
                         Spacer(Modifier.width(8.dp))
@@ -725,7 +698,7 @@ private fun BudgetSheet(
             Spacer(Modifier.height(16.dp))
             val buttonEnabled = if (useCustom) customInput.replace(".", "").toLongOrNull()?.let { it > 0 } == true else budgetFinal > 0
             GreenButton(
-                text    = "Terapkan Budget: ${CurrencyFormatter.compact(budgetFinal)}",
+                text    = stringResource(R.string.home_budget_apply, CurrencyFormatter.compact(budgetFinal)),
                 enabled = buttonEnabled,
                 onClick = {
                     val budget = if (useCustom) customInput.replace(".", "").toLongOrNull() ?: 0L else budgetFinal

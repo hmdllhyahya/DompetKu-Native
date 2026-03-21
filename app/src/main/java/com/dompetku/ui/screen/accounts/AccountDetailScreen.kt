@@ -50,12 +50,10 @@ fun AccountDetailScreen(
     var detailTxn    by remember { mutableStateOf<Transaction?>(null) }
     var editingTxn   by remember { mutableStateOf<Transaction?>(null) }
 
-    val txns     = remember(transactions, account.id) {
-        transactions.filter { it.accountId == account.id || it.toId == account.id }
-            .sortedByDescending { it.date + it.time }
-    }
+    val txns     = transactions
     val income   = remember(txns) { txns.filter { it.type == TransactionType.income  }.sumOf { it.amount } }
     val expense  = remember(txns) { txns.filter { it.type == TransactionType.expense }.sumOf { it.amount } }
+    val accountMap = remember(accounts) { accounts.associateBy { it.id } }
 
     val gradStart = Color(account.gradientStart.toInt())
     val gradEnd   = Color(account.gradientEnd.toInt())
@@ -218,9 +216,8 @@ fun AccountDetailScreen(
                         modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
                 } else {
                     txns.forEachIndexed { i, txn ->
-                        // Resolve from/to names using accounts list
-                        val fromAcc = accounts.find { it.id == txn.accountId }
-                        val toAcc   = txn.toId?.let { id -> accounts.find { it.id == id } }
+                        val fromAcc = accountMap[txn.accountId]
+                        val toAcc   = txn.toId?.let(accountMap::get)
                         TransactionRow(
                             note          = txn.note,
                             category      = txn.category,

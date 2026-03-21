@@ -8,9 +8,11 @@ import androidx.lifecycle.viewModelScope
 import com.dompetku.data.preferences.UserPreferences
 import com.dompetku.util.PinHasher
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -35,8 +37,14 @@ class PinViewModel @Inject constructor(
     fun verifyPin(entered: String) {
         viewModelScope.launch {
             val p = prefs.appPrefsFlow.first()
-            val ok = PinHasher.verifyAndUpgrade(entered, p.pinHash) { newHash ->
-                prefs.setPinHash(newHash)
+            val ok = withContext(Dispatchers.Default) {
+                PinHasher.verify(entered, p.pinHash)
+            }
+            if (ok && p.pinHash.isNotBlank() && !p.pinHash.startsWith("pbkdf2$")) {
+                val upgradedHash = withContext(Dispatchers.Default) {
+                    PinHasher.hash(entered)
+                }
+                prefs.setPinHash(upgradedHash)
             }
             _result.value = if (ok) PinResult.Success else PinResult.Error("PIN salah")
         }
@@ -44,7 +52,9 @@ class PinViewModel @Inject constructor(
 
     fun savePin(pin: String) {
         viewModelScope.launch {
-            val hash = PinHasher.hash(pin)
+            val hash = withContext(Dispatchers.Default) {
+                PinHasher.hash(pin)
+            }
             prefs.setPinHash(hash)
             _result.value = PinResult.Success
         }

@@ -13,6 +13,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY date DESC, time DESC")
     fun observeAll(): Flow<List<TransactionEntity>>
 
+    @Query("SELECT COUNT(*) FROM transactions")
+    fun observeCount(): Flow<Int>
+
     @Query("SELECT * FROM transactions ORDER BY date DESC, time DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<TransactionEntity>>
 
@@ -21,6 +24,13 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE accountId = :accountId ORDER BY date DESC, time DESC")
     fun observeByAccount(accountId: String): Flow<List<TransactionEntity>>
+
+    @Query("""
+        SELECT * FROM transactions
+        WHERE accountId = :accountId OR toId = :accountId
+        ORDER BY date DESC, time DESC
+    """)
+    fun observeLinkedToAccount(accountId: String): Flow<List<TransactionEntity>>
 
     @Query("SELECT * FROM transactions WHERE date BETWEEN :from AND :to ORDER BY date DESC, time DESC")
     fun observeByDateRange(from: String, to: String): Flow<List<TransactionEntity>>
@@ -69,6 +79,9 @@ interface AccountDao {
 
     @Query("SELECT * FROM accounts ORDER BY sortOrder ASC, name ASC")
     fun observeAll(): Flow<List<AccountEntity>>
+
+    @Query("SELECT COUNT(*) FROM accounts")
+    fun observeCount(): Flow<Int>
 
     @Query("SELECT * FROM accounts WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): AccountEntity?

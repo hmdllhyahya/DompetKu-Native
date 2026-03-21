@@ -53,6 +53,9 @@ class TransactionsViewModel @Inject constructor(
     /** Observe attachments for a specific transaction (reactive) */
     fun attachmentsFlow(txnId: String) = attachmentRepo.flowByTransaction(txnId)
 
+    fun transactionsForAccount(accountId: String) =
+        transactionRepo.transactionsLinkedToAccount(accountId)
+
     /** Save content:// URI strings as AttachmentEntity records */
     private suspend fun persistUriAttachments(txnId: String, uris: List<String>) {
         uris.filter { it.startsWith("content://") }.forEach { uri ->

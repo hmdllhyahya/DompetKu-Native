@@ -3,6 +3,7 @@ package com.dompetku.ui.navigation
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -35,7 +36,18 @@ fun DompetKuNavHost(
 ) {
     val startDestination by rootViewModel.startDestination.collectAsStateWithLifecycle()
     val shouldLock       by rootViewModel.shouldLock.collectAsStateWithLifecycle()
-    val start = startDestination ?: return
+    var navStart by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // startDestination should only decide the initial graph route on cold start.
+    // If we keep reacting to pinEnabled changes here, the active back stack can be
+    // invalidated mid-session (e.g. right after first-time PIN setup).
+    LaunchedEffect(startDestination) {
+        if (navStart == null && startDestination != null) {
+            navStart = startDestination
+        }
+    }
+
+    val start = navStart ?: return
 
     // Auto-lock: navigate ke PinLock saat shouldLock = true
     LaunchedEffect(shouldLock) {
@@ -104,15 +116,10 @@ fun DompetKuNavHost(
 
             val accounts     by accountsVm.accounts.collectAsStateWithLifecycle()
             // allTxns: sourced from TransactionsViewModel — AccountsViewModel no longer holds full txn list
-            val txnUiState   by txnVm.uiState.collectAsStateWithLifecycle()
-            val allTxns      = remember(txnUiState.grouped) {
-                txnUiState.grouped.flatMap { (_, txns) -> txns }
-            }
             val rootPrefs    by rootViewModel.prefs.collectAsStateWithLifecycle()
 
             MainScaffold(
                 accounts        = accounts,
-                allTxns         = allTxns,
                 soundEnabled    = rootPrefs?.soundEnabled ?: true,
                 onTxnSaved      = { txn -> txnVm.saveTransaction(txn) },
                 onTxnUpdated    = { old, new -> txnVm.updateTransaction(old, new) },
@@ -171,10 +178,7 @@ fun DompetKuNavHost(
             val txnVm: TransactionsViewModel  = hiltViewModel()
             val accounts  by accountsVm.accounts.collectAsStateWithLifecycle()
             // allTxns for account detail — sourced from TransactionsViewModel
-            val txnState  by txnVm.uiState.collectAsStateWithLifecycle()
-            val allTxns   = remember(txnState.grouped) {
-                txnState.grouped.flatMap { (_, txns) -> txns }
-            }
+            val accountTxns by txnVm.transactionsForAccount(accountId).collectAsStateWithLifecycle(emptyList())
             var editTarget by remember { mutableStateOf<com.dompetku.domain.model.Account?>(null) }
 
             val account  = accounts.find { it.id == accountId } ?: return@composable
@@ -184,7 +188,7 @@ fun DompetKuNavHost(
             AccountDetailScreen(
                 account      = account,
                 accIndex     = accIndex,
-                transactions = allTxns,
+                transactions = accountTxns,
                 accounts     = accounts,
                 hidden       = hidden,
                 onBack       = { navController.popBackStack() },

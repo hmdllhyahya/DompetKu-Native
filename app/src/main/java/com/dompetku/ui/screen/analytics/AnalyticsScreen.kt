@@ -82,7 +82,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                     "today" to stringResource(R.string.filter_today),
                     "week" to stringResource(R.string.filter_this_week),
                     "month" to stringResource(R.string.filter_this_month),
-                    "year" to "Tahun Ini",
+                    "year" to stringResource(R.string.analytics_this_year),
                     "custom" to stringResource(R.string.filter_custom)
                 )
                     .forEach { (id, label) ->
@@ -162,8 +162,8 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    LegendDot(GreenPrimary, "Pemasukan")
-                    LegendDot(RedExpense,   "Pengeluaran")
+                    LegendDot(GreenPrimary, stringResource(R.string.analytics_income_legend))
+                    LegendDot(RedExpense, stringResource(R.string.analytics_expense_legend))
                 }
             }
 
@@ -218,7 +218,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                     Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
                         .background(GreenLight).padding(12.dp).padding(bottom = 8.dp)) {
                         Column {
-                            Text("💡 FUN FACT HARI INI", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                            Text(stringResource(R.string.analytics_fun_fact), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                                 color = GreenPrimary, letterSpacing = 0.6.sp)
                             Spacer(Modifier.height(6.dp))
                             Text(ls.funFact, fontSize = 12.sp, color = TextDark, lineHeight = 19.sp)
@@ -230,7 +230,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                         Column {
                             Row(horizontalArrangement = Arrangement.SpaceBetween,
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                                Text("🎯 MISI MINGGU INI", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                                Text(stringResource(R.string.analytics_weekly_mission), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                                     color = Color.White.copy(alpha = 0.85f), letterSpacing = 0.6.sp)
                                 Text(ls.missionBadge, fontSize = 9.sp, fontWeight = FontWeight.Bold,
                                     color = Color(0xFF86EFAC),
@@ -251,7 +251,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                 WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                     Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                        Text("Estimasi Gaji Ideal", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
+                        Text(stringResource(R.string.analytics_salary_estimate), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = TextDark)
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(Color(0xFFF8FAFC))
@@ -263,7 +263,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 10.dp)) {
                         Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(GreenLight).padding(10.dp)) {
                             Column {
-                                Text("BIAYA HIDUP (30H)", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                                Text(stringResource(R.string.analytics_living_cost), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                                     color = GreenPrimary, letterSpacing = 0.5.sp)
                                 Spacer(Modifier.height(4.dp))
                                 Text(CurrencyFormatter.compact(si.livingCost), fontSize = 16.sp,
@@ -272,7 +272,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                         }
                         Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Color(0xFFF8FAFC)).padding(10.dp)) {
                             Column {
-                                Text("GAJI IDEAL MIN.", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                                Text(stringResource(R.string.analytics_ideal_salary), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                                     color = TextMedium, letterSpacing = 0.5.sp)
                                 Spacer(Modifier.height(4.dp))
                                 Text(CurrencyFormatter.compact(si.idealSalary), fontSize = 16.sp,
@@ -284,7 +284,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                         Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                             .background(GreenLight).padding(10.dp).padding(bottom = 10.dp)) {
                             Column {
-                                Text("JENJANG KARIR", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                                Text(stringResource(R.string.analytics_career_path), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                                     color = GreenPrimary, letterSpacing = 0.5.sp)
                                 Spacer(Modifier.height(4.dp))
                                 Text(si.careerPath, fontSize = 12.sp, color = TextDark, lineHeight = 19.sp)
@@ -295,7 +295,7 @@ fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
                     Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .background(Color(0xFFF8FAFC)).padding(10.dp)) {
                         Column {
-                            Text("REKOMENDASI KARIR", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                            Text(stringResource(R.string.analytics_career_recommendation), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                                 color = TextMedium, letterSpacing = 0.5.sp)
                             Spacer(Modifier.height(4.dp))
                             Text(si.freeJobs, fontSize = 12.sp, color = TextDark, lineHeight = 19.sp)
@@ -390,7 +390,7 @@ private fun PieDonut(
                 }
             } else {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Total", fontSize = 10.sp, color = TextLight)
+                    Text(stringResource(R.string.analytics_total_label), fontSize = 10.sp, color = TextLight)
                     Text(CurrencyFormatter.compact(total), fontSize = 13.sp,
                         fontWeight = FontWeight.ExtraBold, color = TextDark)
                 }
@@ -469,7 +469,7 @@ private fun MonthlyTrendCard(
             verticalAlignment     = Alignment.CenterVertically,
             modifier              = Modifier.fillMaxWidth().padding(bottom = 14.dp),
         ) {
-            Text("Tren $trendMonths Bulan Terakhir", fontSize = 14.sp,
+            Text(stringResource(R.string.analytics_trend_months, trendMonths), fontSize = 14.sp,
                 fontWeight = FontWeight.ExtraBold, color = TextDark)
             // 6 / 12 toggle pill
             Row(
@@ -536,8 +536,8 @@ private fun MonthlyTrendCard(
 
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LegendDot(GreenPrimary, "Pemasukan")
-            LegendDot(RedExpense,   "Pengeluaran")
+            LegendDot(GreenPrimary, stringResource(R.string.analytics_income_legend))
+            LegendDot(RedExpense, stringResource(R.string.analytics_expense_legend))
         }
     }
 }
@@ -570,14 +570,14 @@ private fun SavingsRateCard(
         else              -> RedExpense
     }
     val bgLabel = when {
-        savingsRate >= 30 -> "Hebat! Tabunganmu sehat 🎉" to GreenLight
-        savingsRate >= 10 -> "Lumayan, masih bisa ditingkatkan 👍" to Color(0xFFF0FDF4)
-        savingsRate >= 0  -> "Hati-hati, hampir impas ⚠️" to Color(0xFFFEF9C3)
-        else              -> "Pengeluaran melebihi pemasukan 🚨" to RedLight
+        savingsRate >= 30 -> stringResource(R.string.analytics_savings_good) to GreenLight
+        savingsRate >= 10 -> stringResource(R.string.analytics_savings_ok) to Color(0xFFF0FDF4)
+        savingsRate >= 0  -> stringResource(R.string.analytics_savings_warn) to Color(0xFFFEF9C3)
+        else              -> stringResource(R.string.analytics_savings_bad) to RedLight
     }
 
     WhiteCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-        Text("Savings Rate", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
+        Text(stringResource(R.string.analytics_savings_rate), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
             color = TextDark, modifier = Modifier.padding(bottom = 12.dp))
 
         Row(
@@ -620,7 +620,7 @@ private fun SavingsRateCard(
                         fontWeight = FontWeight.Black,
                         color      = gaugeColor,
                     )
-                    Text("tabungan", fontSize = 9.sp, color = TextLight)
+                    Text(stringResource(R.string.analytics_savings_unit), fontSize = 9.sp, color = TextLight)
                 }
             }
 
@@ -629,12 +629,12 @@ private fun SavingsRateCard(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier            = Modifier.weight(1f),
             ) {
-                SavingsStatRow("Pemasukan",   CurrencyFormatter.compact(totalIncome),  GreenPrimary)
-                SavingsStatRow("Pengeluaran", CurrencyFormatter.compact(totalExpense),  RedExpense)
+                SavingsStatRow(stringResource(R.string.analytics_income_legend), CurrencyFormatter.compact(totalIncome), GreenPrimary)
+                SavingsStatRow(stringResource(R.string.analytics_expense_legend), CurrencyFormatter.compact(totalExpense), RedExpense)
                 HorizontalDivider(color = Color(0xFFF1F5F9))
                 val savings = totalIncome - totalExpense
                 SavingsStatRow(
-                    label  = "Selisih",
+                    label  = stringResource(R.string.analytics_balance_diff),
                     value  = "${if (savings >= 0) "+" else ""}${CurrencyFormatter.compact(savings)}",
                     color  = if (savings >= 0) GreenPrimary else RedExpense,
                     isBold = true,

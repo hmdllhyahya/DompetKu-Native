@@ -24,6 +24,7 @@ class TransactionRepository @Inject constructor(
     private val gson: Gson,
 ) {
     val allTransactions: Flow<List<Transaction>> = dao.observeAll().map { it.map { e -> e.hydrate(gson) } }
+    val transactionCount: Flow<Int> = dao.observeCount()
 
     /** Alias used by ViewModels */
     fun observeAll(): Flow<List<Transaction>> = allTransactions
@@ -34,6 +35,9 @@ class TransactionRepository @Inject constructor(
 
     fun transactionsByAccount(accountId: String): Flow<List<Transaction>> =
         dao.observeByAccount(accountId).map { it.map { e -> e.hydrate(gson) } }
+
+    fun transactionsLinkedToAccount(accountId: String): Flow<List<Transaction>> =
+        dao.observeLinkedToAccount(accountId).map { it.map { e -> e.hydrate(gson) } }
 
     fun transactionsInRange(from: String, to: String): Flow<List<Transaction>> =
         dao.observeByDateRange(from, to).map { it.map { e -> e.hydrate(gson) } }
@@ -98,6 +102,7 @@ class AccountRepository @Inject constructor(
     private val dao: AccountDao,
 ) {
     val allAccounts: Flow<List<Account>> = dao.observeAll().map { it.map(AccountEntity::toDomain) }
+    val accountCount: Flow<Int>          = dao.observeCount()
     val totalBalance: Flow<Long>         = dao.observeTotalBalance().map { it ?: 0L }
 
     /** Alias used by ViewModels */

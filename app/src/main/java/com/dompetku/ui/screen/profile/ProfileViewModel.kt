@@ -53,13 +53,14 @@ class ProfileViewModel @Inject constructor(
 
     val uiState: StateFlow<ProfileUiState> = combine(
         userPrefs.appPrefsFlow,
-        transactionRepo.observeAll(),
+        transactionRepo.transactionCount,
+        accountRepo.accountCount,
         accountRepo.observeAll(),
-    ) { prefs, txns, accounts ->
+    ) { prefs, txnCount, accountCount, accounts ->
         ProfileUiState(
             prefs        = prefs,
-            txnCount     = txns.size,
-            accountCount = accounts.size,
+            txnCount     = txnCount,
+            accountCount = accountCount,
             accounts     = accounts,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProfileUiState())

@@ -365,7 +365,7 @@ fun DateGroupHeader(
             when (d) {
                 today           -> "Hari Ini"
                 today.minusDays(1) -> "Kemarin"
-                else -> d.format(DateTimeFormatter.ofPattern("EEEE, d MMM", Locale("id", "ID")))
+                else -> d.format(DateTimeFormatter.ofPattern("EEEE, d MMM", Locale.getDefault()))
                     .replaceFirstChar { it.uppercase() }
             }
         }.getOrDefault(dateStr)
