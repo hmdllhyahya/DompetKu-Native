@@ -694,13 +694,18 @@ internal object SmartImportEngine {
                 b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)    // day in middle
                 else     -> String.format("%04d-%02d-%02d", c + 2000, b, a)    // assume DD/MM/YY
             }
-            // Sanity check: if result is suspiciously in the future (>7 days),
-            // try swapping month and day to handle ambiguous MM/DD vs DD/MM.
-            // Example: "03/05/2026" parsed as 2026-05-03 (future) -> swap -> 2026-03-05 (correct).
+            // Sanity check: if result is in the future (>7 days), try swapping month<->day.
+            // This auto-detects US-style MM/DD/YYYY (e.g. Money Manager) vs ID-style DD/MM/YYYY.
+            //
+            // Default branch (c > 1900, both a/b ≤ 12) assumes ID style: DD/MM/YYYY
+            //   "03/05/2026" → candidate = 2026-05-03 (May 3)
+            // If candidate is future, try US style swap (c, a, b) = 2026-03-05 (March 5).
+            // NOTE: swap must be (c, a, b) — NOT (c, b, a) which equals the candidate.
             val today = java.time.LocalDate.now()
             val parsed = runCatching { java.time.LocalDate.parse(candidate) }.getOrNull()
             if (parsed != null && parsed.isAfter(today.plusDays(7)) && c > 1900) {
-                val swapped = String.format("%04d-%02d-%02d", c, b, a)
+                // Swap month and day: (c, b, a) was DD/MM → try (c, a, b) = MM/DD interpretation
+                val swapped = String.format("%04d-%02d-%02d", c, a, b)
                 val swappedDate = runCatching { java.time.LocalDate.parse(swapped) }.getOrNull()
                 if (swappedDate != null && !swappedDate.isAfter(today.plusDays(7))) {
                     return swapped

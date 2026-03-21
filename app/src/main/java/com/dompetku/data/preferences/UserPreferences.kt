@@ -39,7 +39,8 @@ class UserPreferences @Inject constructor(
         val MONTHLY_BUDGET  = longPreferencesKey("monthly_budget")
         val SAVED_PCT       = intPreferencesKey("saved_pct")
         val AVATAR_PATH     = stringPreferencesKey("avatar_path")
-        val NOTIF_ENABLED   = booleanPreferencesKey("notif_enabled")
+        val NOTIF_ENABLED      = booleanPreferencesKey("notif_enabled")
+        val VIBRATION_ENABLED  = booleanPreferencesKey("vibration_enabled")
         // Migration sentinel
         val SECURE_MIGRATED = booleanPreferencesKey("secure_migrated")
         // Legacy keys — read once during migration, then cleared
@@ -106,7 +107,8 @@ class UserPreferences @Inject constructor(
             monthlyBudget = prefs[MONTHLY_BUDGET] ?: 0L,
             savedPct      = prefs[SAVED_PCT]      ?: 0,
             avatarPath    = prefs[AVATAR_PATH]    ?: "",
-            notifEnabled  = prefs[NOTIF_ENABLED]  ?: true,
+            notifEnabled      = prefs[NOTIF_ENABLED]     ?: true,
+            vibrationEnabled  = prefs[VIBRATION_ENABLED] ?: true,
             userProfile   = UserProfile(
                 name = sec.userName,
                 age  = sec.userAge,
@@ -144,6 +146,9 @@ class UserPreferences @Inject constructor(
 
     suspend fun setNotifEnabled(enabled: Boolean) =
         store.edit { it[NOTIF_ENABLED] = enabled }
+
+    suspend fun setVibrationEnabled(enabled: Boolean) =
+        store.edit { it[VIBRATION_ENABLED] = enabled }
 
     // ── Mutations — sensitive (SecurePreferences) ─────────────────────────────
 

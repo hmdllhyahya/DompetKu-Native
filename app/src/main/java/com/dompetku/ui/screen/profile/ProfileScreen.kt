@@ -326,6 +326,22 @@ fun ProfileScreen(
                 )
                 HorizontalDivider(color = Color(0xFFF8FAFC))
                 SectionRow(
+                    icon = PhosphorIcons.Regular.DeviceMobile, iconBg = Color(0xFFEDE9FE), iconTint = Color(0xFF8B5CF6),
+                    title = "Getaran",
+                    subtitle = "Haptic feedback saat ketik & toggle",
+                    rightContent = {
+                        Toggle(
+                            checked  = prefs.vibrationEnabled,
+                            onToggle = {
+                                val newVal = !prefs.vibrationEnabled
+                                viewModel.setVibrationEnabled(newVal)
+                                if (newVal) HapticHelper.toggleOn(context, enabled = true)
+                            }
+                        )
+                    },
+                )
+                HorizontalDivider(color = Color(0xFFF8FAFC))
+                SectionRow(
                     icon = PhosphorIcons.Regular.Bell, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFF59E0B),
                     title = stringResource(R.string.profile_daily_reminder),
                     subtitle = stringResource(R.string.profile_daily_reminder_desc),

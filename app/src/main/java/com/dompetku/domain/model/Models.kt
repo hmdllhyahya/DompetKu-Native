@@ -66,5 +66,6 @@ data class AppPreferences(
     val savedPct:      Int     = 0,
     val userProfile:   UserProfile = UserProfile(),
     val avatarPath:    String  = "",
-    val notifEnabled:  Boolean = true,
+    val notifEnabled:       Boolean = true,
+    val vibrationEnabled:  Boolean = true,
 )

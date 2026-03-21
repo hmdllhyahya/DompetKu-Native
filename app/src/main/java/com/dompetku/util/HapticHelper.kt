@@ -7,19 +7,23 @@ import android.os.Vibrator
 
 object HapticHelper {
 
-    fun tapLight(context: Context) {
+    fun tapLight(context: Context, enabled: Boolean = true) {
+        if (!enabled) return
         vibrateOneShot(context, 16L, 40)
     }
 
-    fun tapMedium(context: Context) {
+    fun tapMedium(context: Context, enabled: Boolean = true) {
+        if (!enabled) return
         vibrateOneShot(context, 24L, 80)
     }
 
-    fun toggleOn(context: Context) {
+    fun toggleOn(context: Context, enabled: Boolean = true) {
+        if (!enabled) return
         vibrateWaveform(context, longArrayOf(0L, 18L, 36L, 24L), intArrayOf(0, 80, 0, 120))
     }
 
-    fun toggleOff(context: Context) {
+    fun toggleOff(context: Context, enabled: Boolean = true) {
+        if (!enabled) return
         vibrateOneShot(context, 22L, 90)
     }
 

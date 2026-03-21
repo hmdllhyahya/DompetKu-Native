@@ -308,6 +308,10 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch { userPrefs.setSoundEnabled(enabled) }
     }
 
+    fun setVibrationEnabled(enabled: Boolean) {
+        viewModelScope.launch { userPrefs.setVibrationEnabled(enabled) }
+    }
+
     fun setNotifEnabled(enabled: Boolean) {
         viewModelScope.launch {
             userPrefs.setNotifEnabled(enabled)

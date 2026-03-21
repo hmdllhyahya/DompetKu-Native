@@ -343,6 +343,12 @@ Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN d
 
 ## LOG PERUBAHAN
 
+### 2026-03-21 — Date parse fix + Vibration toggle
+- **BUG FIX (kritikal): parseDate swap identik dengan candidate** — baris `String.format("%04d-%02d-%02d", c, b, a)` di sanity-check adalah sama persis dengan candidate, jadi swap tidak pernah berhasil. Fix: ganti ke `(c, a, b)` untuk benar-benar menukar month↔day. Sekarang `03/05/2026` (Money Manager = March 5) yang ter-parse salah jadi May 3 akan di-swap ke March 5 dengan benar.
+- **Algoritma deteksi ID vs US**: Default tetap ID style (DD/MM/YYYY). Kalau hasil parse > 7 hari ke depan, coba US style (MM/DD) sebagai fallback. Kalau US style hasilnya tidak masa depan, pakai itu. Ini menangani Money Manager (MM/DD) dan input manual DompetKu (DD/MM) secara otomatis.
+- **Toggle Getaran**: Tambah `vibrationEnabled: Boolean` di `AppPreferences`, key di `UserPreferences`, setter di `ProfileViewModel`, dan toggle baru di ProfileScreen section Preferensi (ungu, antara Suara dan Pengingat Harian). Saat user enable, langsung kasih demonstrasi haptic.
+- **HapticHelper**: Semua fungsi public sekarang terima `enabled: Boolean = true` — tinggal pass `prefs.vibrationEnabled` di call site untuk gate seluruh haptic feedback.
+
 ### 2026-03-21 — Import date/time fix + Loading Overlay
 - **Bug: Waktu Excel numeric cells hilang** — `Row.str()` untuk `DateUtil.isCellDateFormatted` sebelumnya hanya return tanggal (`%04d-%02d-%02d`). Sekarang include waktu (`%04d-%02d-%02d %02d:%02d:%02d`) sehingga `extractTimeFromDateStr` bisa parse jam yang benar.
 - **Bug: Tanggal masa depan (MM/DD ambiguous)** — `parseDate("03/05/2026")` menghasilkan `2026-05-03` (Mei = masa depan) karena `b=5 ≤ 12` tidak bisa dibedakan. Fix: setelah parse, cek apakah hasil > today+7 hari. Kalau ya, coba swap month↔day. Kalau hasil swap valid dan bukan masa depan, gunakan itu.
