@@ -343,6 +343,11 @@ Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN d
 
 ## LOG PERUBAHAN
 
+### 2026-03-22 — Date parse fix (Excel datetime month↔day swap)
+- **Root cause ditemukan dari file asli**: Money Manager menyimpan sebagian baris sebagai Excel date serial (bukan string). Apache POI membaca cell ini sebagai `localDateTimeCellValue`. Karena Money Manager menggunakan locale ID (DD/MM/YYYY), Excel menyimpan tanggal dengan month dan day ter-tukar. Contoh: transaksi "12 Maret 2026" (DD=12, MM=03) tersimpan sebagai month=12, day=3 → POI return 3 Desember 2026 (masa depan).
+- **Fix**: Di `Row.str()` untuk `isCellDateFormatted`, setelah baca `localDateTimeCellValue`, cek apakah hasilnya lebih dari 7 hari ke depan. Kalau ya DAN month dan day bisa di-swap jadi tanggal valid non-masa-depan, lakukan swap. Ini menangani semua 479 datetime cells di file Money Manager yang ter-swap.
+- **Dua class of date errors di file yang sama**: String cells ("03/20/2026") = US MM/DD format, ditangani di `parseDate()` dengan sanity-check future-date swap. Datetime cells (POI type) = month-day swapped by Excel locale mismatch, ditangani di `Row.str()` level sebelum string parsing.
+
 ### 2026-03-21 — Date parse fix + Vibration toggle
 - **BUG FIX (kritikal): parseDate swap identik dengan candidate** — baris `String.format("%04d-%02d-%02d", c, b, a)` di sanity-check adalah sama persis dengan candidate, jadi swap tidak pernah berhasil. Fix: ganti ke `(c, a, b)` untuk benar-benar menukar month↔day. Sekarang `03/05/2026` (Money Manager = March 5) yang ter-parse salah jadi May 3 akan di-swap ke March 5 dengan benar.
 - **Algoritma deteksi ID vs US**: Default tetap ID style (DD/MM/YYYY). Kalau hasil parse > 7 hari ke depan, coba US style (MM/DD) sebagai fallback. Kalau US style hasilnya tidak masa depan, pakai itu. Ini menangani Money Manager (MM/DD) dan input manual DompetKu (DD/MM) secara otomatis.

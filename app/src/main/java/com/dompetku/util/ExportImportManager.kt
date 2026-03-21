@@ -964,11 +964,32 @@ internal object SmartImportEngine {
             CellType.NUMERIC -> {
                 if (DateUtil.isCellDateFormatted(cell)) {
                     // Include time component so extractTimeFromDateStr() can pick it up.
-                    // Without this, all imported times would be "00:00".
                     val d = cell.localDateTimeCellValue
+                    // Money Manager stores dates as Excel date serials in ID locale (DD/MM/YYYY).
+                    // When openpyxl/POI reads them, month and day get swapped:
+                    //   actual "03/12" (March 12) → stored as month=12, day=3.
+                    // Detect this by checking if result is suspiciously far in the future.
+                    // If month and day can be swapped to produce a non-future date, do it.
+                    val today = java.time.LocalDate.now()
+                    val asIs = java.time.LocalDate.of(d.year, d.monthValue, d.dayOfMonth)
+                    val yr = d.year; val mo = d.monthValue; val dy = d.dayOfMonth
+                    val useMonth: Int; val useDay: Int
+                    if (asIs.isAfter(today.plusDays(7)) && mo <= 31 && dy <= 12) {
+                        // Try swapping: stored month←→day
+                        val swapped = runCatching {
+                            java.time.LocalDate.of(yr, dy, mo)
+                        }.getOrNull()
+                        if (swapped != null && !swapped.isAfter(today.plusDays(7))) {
+                            useMonth = dy; useDay = mo   // swapped
+                        } else {
+                            useMonth = mo; useDay = dy   // keep as-is
+                        }
+                    } else {
+                        useMonth = mo; useDay = dy
+                    }
                     String.format(
                         "%04d-%02d-%02d %02d:%02d:%02d",
-                        d.year, d.monthValue, d.dayOfMonth,
+                        yr, useMonth, useDay,
                         d.hour, d.minute, d.second,
                     )
                 } else {
