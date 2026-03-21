@@ -343,6 +343,15 @@ Setelah selesai mengerjakan setiap task, tambahkan entry baru di LOG PERUBAHAN d
 
 ## LOG PERUBAHAN
 
+### 2026-03-22 — Corpus-level date format detection
+- **Refactor arsitektur deteksi tanggal** dari per-row menjadi per-sheet (corpus-level). Sebelumnya swap month↔day dilakukan per baris berdasarkan apakah hasilnya masa depan — ini tidak aman untuk file DompetKu yang mungkin punya sedikit transaksi masa depan (tagihan, budget).
+- **`DateFormatHint`**: data class baru di `SmartImportEngine` berisi `swapDatetimeCells: Boolean` dan `swapStringDates: Boolean`.
+- **`detectDateFormat(sheet, dateColIdx, headerRowIdx)`**: scan seluruh kolom tanggal sebelum parsing dimulai. Hitung berapa persen tanggal yang jatuh di masa depan setelah default parsing. Kalau >30% dan ≥3 sampel → set flag swap. Threshold berbeda untuk datetime cells dan string dates.
+- **ISO format selalu skip**: string `YYYY-MM-DD` tidak pernah masuk hitungan → DompetKu export tidak akan pernah di-swap.
+- **Unambiguous dates skip**: string seperti `03/20/2026` (b=20>12) tidak masuk hitungan karena sudah jelas US style.
+- **`Row.str(swapDatetime)` dan `parseDate(swapAmbiguous)`**: kedua fungsi sekarang terima flag eksplisit dari corpus-level detection, bukan memutuskan sendiri per baris.
+- **Keputusan dibuat satu kali per sheet**, diteruskan ke setiap `parseRow()` call.
+
 ### 2026-03-22 — Date parse fix (Excel datetime month↔day swap)
 - **Root cause ditemukan dari file asli**: Money Manager menyimpan sebagian baris sebagai Excel date serial (bukan string). Apache POI membaca cell ini sebagai `localDateTimeCellValue`. Karena Money Manager menggunakan locale ID (DD/MM/YYYY), Excel menyimpan tanggal dengan month dan day ter-tukar. Contoh: transaksi "12 Maret 2026" (DD=12, MM=03) tersimpan sebagai month=12, day=3 → POI return 3 Desember 2026 (masa depan).
 - **Fix**: Di `Row.str()` untuk `isCellDateFormatted`, setelah baca `localDateTimeCellValue`, cek apakah hasilnya lebih dari 7 hari ke depan. Kalau ya DAN month dan day bisa di-swap jadi tanggal valid non-masa-depan, lakukan swap. Ini menangani semua 479 datetime cells di file Money Manager yang ter-swap.

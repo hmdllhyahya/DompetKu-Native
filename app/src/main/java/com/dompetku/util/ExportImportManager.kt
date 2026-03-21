@@ -348,6 +348,13 @@ class ExportImportManager @Inject constructor(
                     continue
                 }
 
+                // Corpus-level date format detection — scan ALL date cells first,
+                // decide once per sheet whether month<->day swap is needed.
+                // This prevents incorrectly converting valid future dates in DompetKu exports.
+                val dateHint = colMap.date?.let {
+                    SmartImportEngine.detectDateFormat(sheet, it, headerRowIdx)
+                } ?: SmartImportEngine.DateFormatHint()
+
                 var rowCount = 0
                 for (rowIdx in (headerRowIdx + 1)..sheet.lastRowNum) {
                     val row = sheet.getRow(rowIdx) ?: continue
@@ -359,7 +366,7 @@ class ExportImportManager @Inject constructor(
                     if (allBlank) continue
 
                     runCatching {
-                        val txn = SmartImportEngine.parseRow(row, colMap, rowIdx)
+                        val txn = SmartImportEngine.parseRow(row, colMap, rowIdx, dateHint)
                             ?: return@runCatching
                         transactions.add(txn)
                         accountRawNames[txn.rawAccountName] =
@@ -538,9 +545,84 @@ internal object SmartImportEngine {
         )
     }
 
+    // ── Date format detection (corpus-level) ─────────────────────────────────
+
+    /**
+     * Scan the entire date column of a sheet BEFORE parsing rows, to decide once
+     * whether month<->day swapping is needed for the whole file.
+     *
+     * Strategy:
+     *   - ISO strings (YYYY-MM-DD) are unambiguous → always skipped from counting.
+     *   - Unambiguous separator strings (a>12 or b>12) → already clear, not counted.
+     *   - Ambiguous separator strings (a≤12 and b≤12) → parsed as ID default (DD/MM),
+     *     counted as "future" if result > today+7.
+     *   - Excel datetime cells → parsed raw, counted as "future" if > today+7.
+     *
+     * Decision: if >30% of counted dates are in the future → that class needs swap.
+     * Threshold requires at least 3 samples to avoid false positives on tiny files.
+     *
+     * Why corpus-level beats per-row:
+     *   A DompetKu export may contain one or two future-dated scheduled transactions.
+     *   Per-row would incorrectly swap those. Corpus-level sees <30% future → no swap.
+     */
+    data class DateFormatHint(
+        val swapDatetimeCells: Boolean = false,  // Excel date serials with swapped month/day
+        val swapStringDates:   Boolean = false,  // Ambiguous separator-style strings (MM/DD vs DD/MM)
+    )
+
+    fun detectDateFormat(sheet: org.apache.poi.ss.usermodel.Sheet, dateColIdx: Int, headerRowIdx: Int): DateFormatHint {
+        val today   = java.time.LocalDate.now()
+        val horizon = today.plusDays(7)
+
+        var dtTotal  = 0; var dtFuture  = 0
+        var strTotal = 0; var strFuture = 0
+
+        for (rowIdx in (headerRowIdx + 1)..sheet.lastRowNum) {
+            val row  = sheet.getRow(rowIdx) ?: continue
+            val cell = row.getCell(dateColIdx) ?: continue
+            when (cell.cellType) {
+                CellType.NUMERIC -> {
+                    if (!DateUtil.isCellDateFormatted(cell)) continue
+                    val d    = runCatching { cell.localDateTimeCellValue }.getOrNull() ?: continue
+                    val date = runCatching {
+                        java.time.LocalDate.of(d.year, d.monthValue, d.dayOfMonth)
+                    }.getOrNull() ?: continue
+                    dtTotal++
+                    if (date.isAfter(horizon)) dtFuture++
+                }
+                CellType.STRING -> {
+                    val raw = cell.stringCellValue?.trim()?.takeIf { it.isNotBlank() } ?: continue
+                    // ISO format (YYYY-MM-DD...) → unambiguous, never needs swap → skip
+                    if (raw.matches(Regex("\\d{4}-\\d{2}-\\d{2}.*"))) continue
+                    // Compact ISO (20250307) → unambiguous → skip
+                    if (raw.matches(Regex("\\d{8}"))) continue
+                    // Separator-based: only count if BOTH a≤12 AND b≤12 (the ambiguous case)
+                    val parts = raw.split(Regex("[/\\.]")).map { it.trim() }
+                    if (parts.size < 3) continue
+                    val a = parts[0].toIntOrNull() ?: continue
+                    val b = parts[1].toIntOrNull() ?: continue
+                    val c = parts[2].take(4).toIntOrNull() ?: continue
+                    if (c <= 1900) continue         // 2-digit year — too ambiguous to count
+                    if (a > 1900) continue          // YYYY/MM/DD style → unambiguous
+                    if (a > 12 || b > 12) continue  // one part > 12 → already unambiguous, no swap needed
+                    // Both a≤12 and b≤12: parse as ID default (DD=a, MM=b)
+                    val candidate = runCatching { java.time.LocalDate.of(c, b, a) }.getOrNull() ?: continue
+                    strTotal++
+                    if (candidate.isAfter(horizon)) strFuture++
+                }
+                else -> continue
+            }
+        }
+
+        // Require ≥3 samples to avoid flipping on tiny files
+        val swapDt  = dtTotal  >= 3 && dtFuture.toFloat()  / dtTotal  > 0.30f
+        val swapStr = strTotal >= 3 && strFuture.toFloat() / strTotal > 0.30f
+        return DateFormatHint(swapDatetimeCells = swapDt, swapStringDates = swapStr)
+    }
+
     // ── Row parsing ───────────────────────────────────────────────────────────
 
-    fun parseRow(row: Row, colMap: ColumnMap, rowIdx: Int): SmartTransaction? {
+    fun parseRow(row: Row, colMap: ColumnMap, rowIdx: Int, dateHint: DateFormatHint = DateFormatHint()): SmartTransaction? {
         val amount: Long
         val type:   TransactionType
         var wasSignFlipped = false
@@ -588,8 +670,8 @@ internal object SmartImportEngine {
             }
         }
 
-        val rawDateStr  = colMap.date?.let { row.str(it) } ?: return null
-        val parsedDate  = parseDate(rawDateStr) ?: return null
+        val rawDateStr  = colMap.date?.let { row.str(it, swapDatetime = dateHint.swapDatetimeCells) } ?: return null
+        val parsedDate  = parseDate(rawDateStr, swapAmbiguous = dateHint.swapStringDates) ?: return null
         // Extract time: prefer dedicated time column, else extract from combined datetime string
         val parsedTime  = colMap.time?.let { row.str(it) }?.let { parseTime(it) }
             ?: extractTimeFromDateStr(rawDateStr)
@@ -674,7 +756,13 @@ internal object SmartImportEngine {
 
     // ── Date parsing ──────────────────────────────────────────────────────────
 
-    fun parseDate(raw: String): String? {
+    /**
+     * Parse a raw date string into YYYY-MM-DD.
+     * [swapAmbiguous]: when true, ambiguous separator dates (both parts ≤12) that resolve
+     * to a future date will have month<->day swapped as a fallback.
+     * When false (default), no swap is attempted — the file's own format is trusted.
+     */
+    fun parseDate(raw: String, swapAmbiguous: Boolean = false): String? {
         val s = raw.trim()
         // ISO: 2025-03-07 or with time suffix
         if (s.matches(Regex("\\d{4}-\\d{2}-\\d{2}.*"))) return s.substring(0, 10)
@@ -694,21 +782,19 @@ internal object SmartImportEngine {
                 b > 12   -> String.format("%04d-%02d-%02d", c + 2000, a, b)    // day in middle
                 else     -> String.format("%04d-%02d-%02d", c + 2000, b, a)    // assume DD/MM/YY
             }
-            // Sanity check: if result is in the future (>7 days), try swapping month<->day.
-            // This auto-detects US-style MM/DD/YYYY (e.g. Money Manager) vs ID-style DD/MM/YYYY.
-            //
-            // Default branch (c > 1900, both a/b ≤ 12) assumes ID style: DD/MM/YYYY
-            //   "03/05/2026" → candidate = 2026-05-03 (May 3)
-            // If candidate is future, try US style swap (c, a, b) = 2026-03-05 (March 5).
-            // NOTE: swap must be (c, a, b) — NOT (c, b, a) which equals the candidate.
-            val today = java.time.LocalDate.now()
-            val parsed = runCatching { java.time.LocalDate.parse(candidate) }.getOrNull()
-            if (parsed != null && parsed.isAfter(today.plusDays(7)) && c > 1900) {
-                // Swap month and day: (c, b, a) was DD/MM → try (c, a, b) = MM/DD interpretation
-                val swapped = String.format("%04d-%02d-%02d", c, a, b)
-                val swappedDate = runCatching { java.time.LocalDate.parse(swapped) }.getOrNull()
-                if (swappedDate != null && !swappedDate.isAfter(today.plusDays(7))) {
-                    return swapped
+            // If corpus-level detection flagged this file as needing swap (swapAmbiguous=true),
+            // and the candidate is in the future, try treating it as MM/DD instead of DD/MM.
+            // If swapAmbiguous=false, trust the file format as-is (no swap).
+            if (swapAmbiguous && c > 1900) {
+                val today  = java.time.LocalDate.now()
+                val parsed = runCatching { java.time.LocalDate.parse(candidate) }.getOrNull()
+                if (parsed != null && parsed.isAfter(today.plusDays(7))) {
+                    // Try (c, a, b): swap DD/MM → MM/DD interpretation
+                    val swapped = String.format("%04d-%02d-%02d", c, a, b)
+                    val swappedDate = runCatching { java.time.LocalDate.parse(swapped) }.getOrNull()
+                    if (swappedDate != null && !swappedDate.isAfter(today.plusDays(7))) {
+                        return swapped
+                    }
                 }
             }
             return candidate
@@ -957,32 +1043,30 @@ internal object SmartImportEngine {
 
     // ── Cell helper extensions ────────────────────────────────────────────────
 
-    fun Row.str(colIdx: Int): String? {
+    /**
+     * Read a cell as a string. When [swapDatetime] is true and the cell is an Excel
+     * datetime with a future date, attempt to swap month<->day to correct locale mismatch
+     * (Money Manager saves dates in DD/MM but Excel serial stores them as MM/DD).
+     * When [swapDatetime] is false (default), datetime cells are read as-is.
+     */
+    fun Row.str(colIdx: Int, swapDatetime: Boolean = false): String? {
         val cell = getCell(colIdx) ?: return null
         return when (cell.cellType) {
             CellType.STRING  -> cell.stringCellValue?.trim()?.takeIf { it.isNotBlank() }
             CellType.NUMERIC -> {
                 if (DateUtil.isCellDateFormatted(cell)) {
-                    // Include time component so extractTimeFromDateStr() can pick it up.
                     val d = cell.localDateTimeCellValue
-                    // Money Manager stores dates as Excel date serials in ID locale (DD/MM/YYYY).
-                    // When openpyxl/POI reads them, month and day get swapped:
-                    //   actual "03/12" (March 12) → stored as month=12, day=3.
-                    // Detect this by checking if result is suspiciously far in the future.
-                    // If month and day can be swapped to produce a non-future date, do it.
-                    val today = java.time.LocalDate.now()
-                    val asIs = java.time.LocalDate.of(d.year, d.monthValue, d.dayOfMonth)
                     val yr = d.year; val mo = d.monthValue; val dy = d.dayOfMonth
                     val useMonth: Int; val useDay: Int
-                    if (asIs.isAfter(today.plusDays(7)) && mo <= 31 && dy <= 12) {
-                        // Try swapping: stored month←→day
-                        val swapped = runCatching {
-                            java.time.LocalDate.of(yr, dy, mo)
-                        }.getOrNull()
+                    if (swapDatetime && mo <= 31 && dy <= 12) {
+                        // Corpus-level detection decided this file needs month<->day swap.
+                        // Only swap if the swap actually produces a valid non-future date.
+                        val today   = java.time.LocalDate.now()
+                        val swapped = runCatching { java.time.LocalDate.of(yr, dy, mo) }.getOrNull()
                         if (swapped != null && !swapped.isAfter(today.plusDays(7))) {
-                            useMonth = dy; useDay = mo   // swapped
+                            useMonth = dy; useDay = mo
                         } else {
-                            useMonth = mo; useDay = dy   // keep as-is
+                            useMonth = mo; useDay = dy
                         }
                     } else {
                         useMonth = mo; useDay = dy
